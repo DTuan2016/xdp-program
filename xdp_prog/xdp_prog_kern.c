@@ -71,6 +71,39 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
+
+static long print_flow_callback(struct flow_key *key, data_point *value, void *ctx){
+    bpf_printk("Flow: %u:%u, pkts=%llu, bytes=%llu", 
+        key->src_ip, key->src_port,
+        value->total_pkts, value->total_bytes);
+        return 0;
+}
+
+// static long count_flows_callback(struct flow_key *key, data_point *value, void *ctx)
+// {
+//     __u32 *counter = (__u32 *)ctx;
+//     (*counter)++;
+//     return 0; // Continue iteration
+// }
+
+// static long find_high_traffic_callback(struct flow_key *key, data_point *value, void *ctx)
+// {
+//     __u64 *threshold = (__u64 *)ctx;
+    
+//     if (value->total_pkts > *threshold) {
+//         bpf_printk("High traffic flow: %u:%u with %llu packets", 
+//                    key->src_ip, key->src_port, value->total_pkts);
+//     }
+//     return 0; // Continue iteration
+// }
+
+// static long sum_bytes_callback(struct flow_key *key, data_point *value, void *ctx)
+// {
+//     __u64 *total_bytes = (__u64 *)ctx;
+//     *total_bytes += value->total_bytes;
+//     return 0; // Continue iteration
+// }
+
 /*================= TEST MATH =================*/
 static __always_inline fixed euclidean_distance_fixed(const data_point *a, const data_point *b)
 {
@@ -148,6 +181,24 @@ int xdp_flow_tracking_run(struct xdp_md *ctx) {
         update_stats(&key, ctx, 0); /* backward */ 
     return XDP_PASS; 
 }
+
+/* Program to iterate through all flows and print them */
+SEC("xdp")
+int xdp_print_all_flows(struct xdp_md *ctx)
+{
+    bpf_printk("=== Printing all flows ===");
+    
+    long ret = bpf_for_each_map_elem(&xdp_flow_tracking, print_flow_callback, NULL, 0);
+    
+    if (ret < 0) {
+        bpf_printk("Error iterating flows: %ld", ret);
+    } else {
+        bpf_printk("Processed %ld flows", ret);
+    }
+    
+    return XDP_PASS;
+}
+
 /* Optional math test program */
 SEC("xdp")
 int test(struct xdp_md *ctx)
