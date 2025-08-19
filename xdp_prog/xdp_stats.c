@@ -1,7 +1,4 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-// static const char *__doc__ = "XDP stats program\n"
-// 	" - Finding xdp_stats_map via --dev name info\n";
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,38 +8,29 @@
 #include <arpa/inet.h>
 #include <bpf/bpf.h>
 #include <linux/if_link.h>
-#include "common_kern_user.h"
 #include <locale.h>
 #include <unistd.h>
 #include <time.h>
-
-#include <bpf/bpf.h>
-/* Lesson#1: this prog does not need to #include <bpf/libbpf.h> as it only uses
- * the simple bpf-syscall wrappers, defined in libbpf #include<bpf/bpf.h>
- */
-#include <bpf/libbpf.h> /* libbpf_num_possible_cpus */
-
 #include <net/if.h>
-#include <linux/if_link.h> /* depend on kernel-headers installed */
+
+#include <bpf/libbpf.h> /* libbpf_num_possible_cpus */
 
 #include "../common/common_params.h"
 #include "../common/common_user_bpf_xdp.h"
 #include "common_kern_user.h"
 
 static const struct option_wrapper long_options[] = {
-	{{"help",        no_argument,		NULL, 'h' },
-	 "Show help", false},
+    {{"help", no_argument, NULL, 'h'},
+     "Show help", false},
 
-	{{"dev",         required_argument,	NULL, 'd' },
-	 "Operate on device <ifname>", "<ifname>", true},
+    {{"dev", required_argument, NULL, 'd'},
+     "Operate on device <ifname>", "<ifname>", true},
 
-	{{"quiet",       no_argument,		NULL, 'q' },
-	 "Quiet mode (no output)"},
+    {{"quiet", no_argument, NULL, 'q'},
+     "Quiet mode (no output)"},
 
-	{{0, 0, NULL,  0 }}
+    {{0, 0, NULL, 0}}
 };
-
-#define NANOSEC_PER_SEC 1000000000 /* 10^9 */
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -51,40 +39,21 @@ static const struct option_wrapper long_options[] = {
 const char *pin_basedir = "/sys/fs/bpf";
 
 static void print_flow_key(struct flow_key *key) {
-    char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
-
+    char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
-    // is_forward_init()
-     printf("%s:%u -> %s:%u proto=%u",
-           src_ip, ntohs(key->src_port),
-           dst_ip, ntohs(key->dst_port),
-           key->protocol);
+    printf("%s:%u", src_ip, ntohs(key->src_port));
 }
 
-static void print_flow_stats(struct flow_stats *value) {
-    unsigned long long fwd_pkt = value->fwd_pkt_count;
-    unsigned long long bwd_pkt = value->bwd_pkt_count;
-    unsigned long long total_pkt = fwd_pkt + bwd_pkt;
-
-    unsigned long long fwd_bytes = value->total_fwd_len;
-    unsigned long long bwd_bytes = value->total_bwd_len;
-    unsigned long long total_bytes = fwd_bytes + bwd_bytes;
-
-    unsigned long long flow_duration = value->time_end_ns - value->time_start_ns;
-    unsigned long long mean_iat = 0;
-    if (total_pkt > 0)
-        mean_iat = value->sum_iat_ns / total_pkt;
-
-    printf("%-10llu | %-10llu | %-10llu | %-10llu | %-10llu | %-12llu | %-12llu | %-12llu\n",
-           total_pkt,
-           fwd_pkt,
-           bwd_pkt,
-           fwd_bytes,
-           bwd_bytes,
-           total_bytes,
-           flow_duration,
-           mean_iat);
+static void print_data_point(const data_point *dp) {
+    printf("%-12llu | %-12llu | %-12llu | %-12llu | %-12lld | %-12lld | %-12lld | %-12lld\n",
+           dp->flow_duration,
+           dp->total_pkts,
+           dp->total_bytes,
+           dp->flow_IAT_mean,
+           (long long)dp->k_distance,
+           (long long)dp->reach_dist[0], // in demo chỉ in 1 giá trị đầu
+           (long long)dp->lrd_value,
+           (long long)dp->lof_value);
 }
 
 int main(int argc, char **argv)
@@ -99,7 +68,7 @@ int main(int argc, char **argv)
         .do_unload = false,
     };
 
-    const char *__doc__ = "Dump flow tracking from XDP BPF map\n";
+    const char *__doc__ = "Dump data_point from XDP BPF map\n";
 
     /* Parse command line args */
     parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
@@ -121,15 +90,15 @@ int main(int argc, char **argv)
         return EXIT_FAIL_BPF;
 
     struct flow_key key, next_key;
-    struct flow_stats value;
+    data_point value;
 
     while (1) {
         int stt = 1;
         printf("\n=== Flow Table ===\n");
-        printf("%-4s | %-21s | %-21s | %-5s | %-7s | %-7s | %-9s | %-10s | %-10s | %-12s | %-12s | %-12s \n",
-               "STT", "SrcIP:Port", "DstIP:Port", "Proto",
-               "FwdPkt", "BwdPkt", "TotalPkt",
-               "FwdBytes", "BwdBytes", "TotalBytes", "FlowDur(ns)", "MeanIAT(ns)");
+        printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s \n",
+               "STT", "SrcIP:Port",
+               "FlowDur(ns)", "TotalPkts", "TotalBytes", "MeanIAT(ns)",
+               "k-dist", "reach[0]", "lrd/lof");
 
         memset(&key, 0, sizeof(key));
 
@@ -138,7 +107,7 @@ int main(int argc, char **argv)
                 printf("%-4d | ", stt++);
                 print_flow_key(&next_key);
                 printf(" | ");
-                print_flow_stats(&value);
+                print_data_point(&value);
                 printf("\n");
             }
             key = next_key;
