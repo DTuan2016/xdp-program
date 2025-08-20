@@ -369,46 +369,55 @@ static int update_affected_callback(void *map, const void *key, void *value, voi
 SEC("xdp")
 int xdp_print_all_flows(struct xdp_md *ctx)
 {
+    bpf_printk("=== [MAIN] XDP packet processing started ===");
+    
     struct flow_key key = {};
     __u64 pkt_len = 0;
 
-    if (parse_packet_get_data(ctx, &key, &pkt_len) < 0)
-        return XDP_PASS;
-
-    int created = update_stats(&key, ctx, 1);
-
-    /* Lấy lại entry (target) */
-    data_point *target = bpf_map_lookup_elem(&xdp_flow_tracking, &key);
-    if (!target) {
-        /* không tìm thấy entry => nothing to do */
+    if (parse_packet_get_data(ctx, &key, &pkt_len) < 0) {
+        bpf_printk("[MAIN] Parse failed, passing packet");
         return XDP_PASS;
     }
 
-    /* Nếu mới tạo: LOF mặc định = 0 (theo sơ đồ) - đã khởi tạo lúc tạo.
-       Dù mới tạo hay cập nhật, ta cần tính K-distance, LRD, LOF cho chính target */
+    int created = update_stats(&key, ctx, 1);
+    bpf_printk("[MAIN] Stats update result: %d (1=created, 0=updated, -1=error)", created);
+
+    data_point *target = bpf_map_lookup_elem(&xdp_flow_tracking, &key);
+    if (!target) {
+        bpf_printk("[MAIN] ERROR: Cannot lookup target after update");
+        return XDP_PASS;
+    }
+
+    bpf_printk("[MAIN] Computing LOF for target flow port %u", key.src_port);
+    
     compute_k_distance_and_lrd(target);
     compute_lof_for_target(target);
 
-    /* Tìm và cập nhật các data_point bị ảnh hưởng bởi target.
-       Ở đây phép định nghĩa affected = neighbor có khoảng cách <= target->k_distance */
+    bpf_printk("[MAIN] Target results: k_dist=%lld, lrd=%lld, lof=%lld", 
+               target->k_distance, target->lrd_value, target->lof_value);
+
     struct affected_ctx actx = {
         .target = target,
         .target_kdist = target->k_distance,
         .map = &xdp_flow_tracking,
+        .affected_count = 0,
     };
 
+    bpf_printk("[MAIN] Updating affected neighbors...");
     long ret = bpf_for_each_map_elem(&xdp_flow_tracking, update_affected_callback, &actx, 0);
-    if (ret < 0)
-        bpf_printk("Error iterating flows to update affected: %ld", ret);
+    if (ret < 0) {
+        bpf_printk("[MAIN] ERROR: affected neighbors update failed: %ld", ret);
+    } else {
+        bpf_printk("[MAIN] Updated %d affected neighbors", actx.affected_count);
+    }
 
-    /* (tuỳ chọn) In thông tin target để debug */
     __u32 ip_le = bpf_ntohl(key.src_ip);
     __u32 a = (ip_le >> 24) & 0xff;
     __u32 b = (ip_le >> 16) & 0xff;
     __u32 c = (ip_le >>  8) & 0xff;
     __u32 d = (ip_le >>  0) & 0xff;
 
-    bpf_printk("Flow %u.%u.%u.%u:%u pkts=%u bytes=%u meanIAT=%u kdist=%lld lrd=%lld lof=%lld (created=%d)",
+    bpf_printk("=== [FINAL] Flow %u.%u.%u.%u:%u pkts=%u bytes=%u meanIAT=%u kdist=%lld lrd=%lld lof=%lld (created=%d) ===",
                a, b, c, d, key.src_port,
                target->total_pkts, target->total_bytes, target->flow_IAT_mean,
                target->k_distance, target->lrd_value, target->lof_value, created);
