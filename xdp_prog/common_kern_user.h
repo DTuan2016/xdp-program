@@ -34,13 +34,15 @@ typedef struct {
     __u32 flow_IAT_mean;    /* Mean Inter-Arrival Time */
     
     /* LOF (Local Outlier Factor) algorithm data */
-    fixed k_distance;       /* k-distance value */
-    fixed reach_dist[KNN];  /* Reachability distances to k neighbors */
-    fixed lrd_value;        /* Local Reachability Density */
-    fixed lof_value;        /* Local Outlier Factor score */
-    
-    /* Processing status */
-    int is_calculated;      /* 1 = calculated, 0 = not calculated */
+    // fixed k_distance;       /* k-distance value */
+    // fixed reach_dist[KNN];  /* Reachability distances to k neighbors */
+    // fixed lrd_value;        /* Local Reachability Density */
+    // fixed lof_value;        /* Local Outlier Factor score */
+
+    int32_t k_distance;       /* k-distance value */
+    int32_t reach_dist[KNN];  /* Reachability distances to k neighbors */
+    long lrd_value;        /* Local Reachability Density */
+    long lof_value;        /* Local Outlier Factor score */
 } data_point;
 
 /* Fixed-point arithmetic functions */

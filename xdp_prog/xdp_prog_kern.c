@@ -10,9 +10,10 @@
 
 #include "common_kern_user.h"
 
+// #define INT32_MAX 2147483647
 #define NANOSEC_PER_SEC 1000000000ULL
 #define MAX_FLOW_SAVED  100
-
+#define SCALEEEEEE      1000
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
@@ -25,6 +26,20 @@ struct {
     __uint(max_entries, MAX_FLOW_SAVED);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
+
+static __always_inline __u32 int_sqrt64(__u32 x)
+{
+    if (x == 0) return 0;
+
+    __u32 res = x;
+    __u32 prev = 0;
+
+    while (res != prev) {
+        prev = res;
+        res = (res + x / res) >> 1;  // Newton-Raphson
+    }
+    return res;
+}
 
 /*================= HELPERS =================*/
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
@@ -97,19 +112,19 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
         bpf_printk("[STATS] Creating new flow entry for port %u", key->src_port);
         data_point zero = {};
         /* init new entry */
-        zero.start_ts = ts / 1000000;      // Convert ns → ms ngay từ đầu
-        zero.last_seen = ts / 1000000;     // Convert ns → ms
-        zero.total_pkts = 1;
-        zero.total_bytes = pkt_len;
-        zero.sum_IAT = 0;                  // ms
-        zero.flow_IAT_mean = 0;            // ms
+        zero.start_ts = ts;      
+        zero.last_seen = ts;     
+        zero.total_pkts = 1 + 10000;
+        zero.total_bytes = pkt_len + 10000;
+        zero.sum_IAT = 0;                  
+        zero.flow_IAT_mean = 0;           
 
-        zero.k_distance = fixed_from_int(0);
+        zero.k_distance = 0;
 #pragma unroll
         for (int i = 0; i < KNN; i++)
-            zero.reach_dist[i] = fixed_from_int(0);
-        zero.lrd_value = fixed_from_int(0);
-        zero.lof_value = fixed_from_int(0);
+            zero.reach_dist[i] = 0;
+        zero.lrd_value = 0;
+        zero.lof_value = 0;
 
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0) {
             bpf_printk("[STATS] ERROR: Failed to insert new data_point for port %u", key->src_port);
@@ -121,22 +136,22 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
     }
 
     /* Update existing entry */
-    __u64 current_ms = ts / 1000000; // Convert to ms
-    __u64 iat_ms = 0;
+    __u64 current_ns = ts; // Convert to ms
+    __u64 iat_ns = 0;
     
-    if (dp->last_seen > 0 && current_ms >= dp->last_seen)
-        iat_ms = current_ms - dp->last_seen;
+    if (dp->last_seen > 0 && current_ns >= dp->last_seen)
+        iat_ns = current_ns - dp->last_seen;
 
     bpf_printk("[STATS] Updating existing flow port %u: pkts %u->%u, iat_ms=%llu", 
-               key->src_port, dp->total_pkts, dp->total_pkts + 1, iat_ms);
+               key->src_port, dp->total_pkts, dp->total_pkts + 1, iat_ns);
 
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
 
-    if (iat_ms > 0)
-        dp->sum_IAT += iat_ms;          
+    if (iat_ns > 0)
+        dp->sum_IAT += iat_ns;          
 
-    dp->last_seen = current_ms;           
+    dp->last_seen = current_ns;           
 
     /* Mean IAT in milliseconds */
     if (dp->total_pkts > 1)
@@ -148,57 +163,66 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
     return 0;
 }
 
-static __always_inline int clamp_to_int32(__u64 v)
-{
-    if (v > 0x7fffffffULL) return 0x7fffffff;
-    return (int)v;
-}
+// static __always_inline int clamp_to_int32(__u64 v)
+// {
+//     if (v > 0x7fffffffULL) return 0x7fffffff;
+//     return (int)v;
+// }
 
 /*================= MATH (fixed) =================*/
-static __always_inline fixed euclidean_distance_fixed(const data_point *a, const data_point *b)
+static __always_inline int32_t euclidean_distance_fixed(const data_point *a, const data_point *b)
 {
     bpf_printk("[DISTANCE] Computing distance between flows");
-    fixed fx_bytes_a = fixed_from_int(clamp_to_int32(a->total_bytes));
-    fixed fx_bytes_b = fixed_from_int(clamp_to_int32(b->total_bytes));
-    fixed fx_pkts_a  = fixed_from_int(clamp_to_int32(a->total_pkts));
-    fixed fx_pkts_b  = fixed_from_int(clamp_to_int32(b->total_pkts));
-    fixed fx_iat_a   = fixed_from_int(clamp_to_int32(a->flow_IAT_mean));
-    fixed fx_iat_b   = fixed_from_int(clamp_to_int32(b->flow_IAT_mean));
+    int64_t fx = (int64_t)a->total_bytes - (int64_t)b->total_bytes;
+    int64_t fy = (int64_t)a->total_pkts - (int64_t)b->total_pkts;  
+    int64_t fz = (int64_t)a->flow_IAT_mean - (int64_t)b->flow_IAT_mean;
+    int64_t fw = ((int64_t)a->last_seen - (int64_t)a->start_ts) - 
+                 ((int64_t)b->last_seen - (int64_t)b->start_ts);
 
-    __u64 dur_a = (a->last_seen >= a->start_ts) ? (a->last_seen - a->start_ts) : 0;
-    __u64 dur_b = (b->last_seen >= b->start_ts) ? (b->last_seen - b->start_ts) : 0;
-    fixed fx_dur_a = fixed_from_int(clamp_to_int32(dur_a));
-    fixed fx_dur_b = fixed_from_int(clamp_to_int32(dur_b));
+    int64_t sum_squares = fx*fx + fy*fy + fz*fz + fw*fw;
+    if (sum_squares > INT32_MAX) sum_squares = INT32_MAX;
+    int32_t ans = int_sqrt64((__u32)sum_squares);
+    // fixed fx_bytes_a = fixed_from_int(clamp_to_int32(a->total_bytes));
+    // fixed fx_bytes_b = fixed_from_int(clamp_to_int32(b->total_bytes));
+    // fixed fx_pkts_a  = fixed_from_int(clamp_to_int32(a->total_pkts));
+    // fixed fx_pkts_b  = fixed_from_int(clamp_to_int32(b->total_pkts));
+    // fixed fx_iat_a   = fixed_from_int(clamp_to_int32(a->flow_IAT_mean));
+    // fixed fx_iat_b   = fixed_from_int(clamp_to_int32(b->flow_IAT_mean));
+
+    // __u64 dur_a = (a->last_seen >= a->start_ts) ? (a->last_seen - a->start_ts) : 0;
+    // __u64 dur_b = (b->last_seen >= b->start_ts) ? (b->last_seen - b->start_ts) : 0;
+    // fixed fx_dur_a = fixed_from_int(clamp_to_int32(dur_a));
+    // fixed fx_dur_b = fixed_from_int(clamp_to_int32(dur_b));
 
     bpf_printk("[DISTANCE] A: bytes=%u, pkts=%u, iat=%u, dur=%llu", 
-               a->total_bytes, a->total_pkts, a->flow_IAT_mean, dur_a);
+               a->total_bytes, a->total_pkts, a->flow_IAT_mean, a->last_seen - a->start_ts);
     bpf_printk("[DISTANCE] B: bytes=%u, pkts=%u, iat=%u, dur=%llu", 
-               b->total_bytes, b->total_pkts, b->flow_IAT_mean, dur_b);
+               b->total_bytes, b->total_pkts, b->flow_IAT_mean, b->last_seen - b->start_ts);
 
-    fixed dx = fixed_sub(fx_bytes_a, fx_bytes_b);
-    fixed dy = fixed_sub(fx_pkts_a, fx_pkts_b);
-    fixed dz = fixed_sub(fx_iat_a, fx_iat_b);
-    fixed dw = fixed_sub(fx_dur_a, fx_dur_b);
+    // fixed dx = fixed_sub(fx_bytes_a, fx_bytes_b);
+    // fixed dy = fixed_sub(fx_pkts_a, fx_pkts_b);
+    // fixed dz = fixed_sub(fx_iat_a, fx_iat_b);
+    // fixed dw = fixed_sub(fx_dur_a, fx_dur_b);
 
-    fixed sx = fixed_mul(dx, dx);
-    fixed sy = fixed_mul(dy, dy);
-    fixed sz = fixed_mul(dz, dz);
-    fixed sw = fixed_mul(dw, dw);
+    // fixed sx = fixed_mul(dx, dx);
+    // fixed sy = fixed_mul(dy, dy);
+    // fixed sz = fixed_mul(dz, dz);
+    // fixed sw = fixed_mul(dw, dw);
     
-    fixed result = fixed_sqrt(fixed_add(fixed_add(sx, sy), fixed_add(sz, sw)));
-    bpf_printk("[DISTANCE] Computed distance: %lld", result);
+    // fixed result = fixed_sqrt(fixed_add(fixed_add(sx, sy), fixed_add(sz, sw)));
+    bpf_printk("[DISTANCE] Computed distance: %lld", ans);
     
-    return result;
+    return ans;
 }
 
-static __always_inline void init_reach_dist(fixed *reach_dist) {
+static __always_inline void init_reach_dist(int32_t *reach_dist) {
     bpf_printk("[KNN] Initializing reach_dist array");
 #pragma unroll
     for (int i = 0; i < KNN; i++)
-        reach_dist[i] = fixed_from_int(100); // init large
+        reach_dist[i] = INT32_MAX; // init large
 }
 
-static __always_inline void update_knn_distances(fixed *reach_dist, fixed dist) {
+static __always_inline void update_knn_distances(int32_t *reach_dist, int32_t dist) {
     bpf_printk("[KNN] Updating KNN with distance: %lld", dist);
 #pragma unroll
     for (int m = 0; m < KNN; m++) {
@@ -216,7 +240,7 @@ static __always_inline void update_knn_distances(fixed *reach_dist, fixed dist) 
 
 struct knn_ctx_local {
     data_point *target;
-    fixed *reach_dist;
+    int32_t *reach_dist;
     int neighbor_count;
 };
 
@@ -233,7 +257,7 @@ static int knn_scan_cb(void *map, const void *key, void *value, void *ctx)
     c->neighbor_count++;
     bpf_printk("[KNN_SCAN] Processing neighbor #%d", c->neighbor_count);
 
-    fixed dist = euclidean_distance_fixed(c->target, neighbor);
+    int32_t dist = euclidean_distance_fixed(c->target, neighbor);
     bpf_printk("[KNN_SCAN] Neighbor distance: %lld", dist);
     
     update_knn_distances(c->reach_dist, dist);
@@ -244,7 +268,7 @@ static __always_inline void compute_k_distance_and_lrd(data_point *target)
 {
     bpf_printk("[LRD] Computing K-distance and LRD");
     
-    fixed reach_dist[KNN];
+    int32_t reach_dist[KNN];
     init_reach_dist(reach_dist);
 
     struct knn_ctx_local c = {
@@ -265,25 +289,26 @@ static __always_inline void compute_k_distance_and_lrd(data_point *target)
     target->k_distance = reach_dist[KNN - 1];
     bpf_printk("[LRD] K-distance (reach_dist[%d]): %lld", KNN-1, target->k_distance);
 
-    fixed reach_sum = 0;
+    int32_t reach_sum = 0;
 #pragma unroll
     for (int i = 0; i < KNN; i++)
-        reach_sum = fixed_add(reach_sum, reach_dist[i]);
+        reach_sum += reach_dist[i];
 
     bpf_printk("[LRD] Reach sum: %lld", reach_sum);
 
     if (reach_sum > 0) {
-        target->lrd_value = fixed_div(fixed_from_int(KNN), reach_sum);
+        target->lrd_value = (KNN * SCALEEEEEE) / reach_sum;  
+        // target->lrd_value = fixed_div(fixed_from_int(KNN), reach_sum);
         bpf_printk("[LRD] LRD = %d / %lld = %lld", KNN, reach_sum, target->lrd_value);
     } else {
-        target->lrd_value = fixed_from_int(0);
+        target->lrd_value = 0;
         bpf_printk("[LRD] LRD = 0 (reach_sum was 0)");
     }
 }
 /* compute_lof_for_target uses original compute_lof_callback but adapted locally */
 struct lof_ctx {
     data_point *target;
-    fixed ti_le_lrd;
+    long ti_le_lrd;
     int neighbor_count;
 };
 
@@ -301,8 +326,10 @@ static int compute_lof_callback(void *map, const void *key, void* value, void *c
                c->neighbor_count, neighbor->lrd_value, c->target->lrd_value);
 
     if(neighbor->lrd_value > 0 && c->target->lrd_value > 0) {
-        fixed ratio = fixed_div(neighbor->lrd_value, c->target->lrd_value);
-        c->ti_le_lrd = fixed_add(c->ti_le_lrd, ratio);
+        long ratio = neighbor->lrd_value / c->target->lrd_value;
+        // fixed ratio = fixed_div(neighbor->lrd_value, c->target->lrd_value);
+        // c->ti_le_lrd = fixed_add(c->ti_le_lrd, ratio);
+        c->ti_le_lrd = c->ti_le_lrd + ratio;
         bpf_printk("[LOF_CB] Added ratio %lld, running sum=%lld", ratio, c->ti_le_lrd);
     } else {
         bpf_printk("[LOF_CB] Skipped: zero LRD value");
@@ -328,10 +355,11 @@ static __always_inline void compute_lof_for_target(data_point *target) {
     bpf_printk("[LOF] Processed %d neighbors, sum_ratio=%lld", ctx.neighbor_count, ctx.ti_le_lrd);
 
     if (ctx.ti_le_lrd > 0) {
-        target->lof_value = fixed_div(ctx.ti_le_lrd, fixed_from_int(KNN));
+        // target->lof_value = fixed_div(ctx.ti_le_lrd, fixed_from_int(KNN));
+        target->lof_value = ctx.ti_le_lrd / KNN;
         bpf_printk("[LOF] Final LOF = %lld / %d = %lld", ctx.ti_le_lrd, KNN, target->lof_value);
     } else {
-        target->lof_value = fixed_from_int(0);
+        target->lof_value = 0;
         bpf_printk("[LOF] LOF = 0 (sum_ratio was 0)");
     }
 }
@@ -339,7 +367,7 @@ static __always_inline void compute_lof_for_target(data_point *target) {
 /*================= AFFECTED NEIGHBORS UPDATE =================*/
 struct affected_ctx {
     data_point *target;
-    fixed target_kdist;
+    int32_t target_kdist;
     void *map;
     int affected_count;
 };
@@ -352,7 +380,7 @@ static int update_affected_callback(void *map, const void *key, void *value, voi
         return 0;
     }   
 
-    fixed dist = euclidean_distance_fixed(c->target, neighbor);
+    int32_t dist = euclidean_distance_fixed(c->target, neighbor);
     bpf_printk("[AFFECTED] Checking neighbor: dist=%lld, target_kdist=%lld", dist, c->target_kdist);
 
     if (dist <= c->target_kdist) {
