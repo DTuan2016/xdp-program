@@ -44,16 +44,16 @@ static void print_flow_key(struct flow_key *key) {
     printf("%s:%u", src_ip, ntohs(key->src_port));
 }
 
-static void print_data_point(const data_point *dp) {
-    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12lu | %-12lu\n",
+static void print_data_point(data_point *dp) {
+    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12.8f | %-12.8f\n",
            dp->last_seen - dp->start_ts,
            dp->total_pkts,
            dp->total_bytes,
            dp->flow_IAT_mean,
            dp->k_distance,
            dp->reach_dist[0], // in demo chỉ in 1 giá trị đầu
-           dp->lrd_value,
-           dp->lof_value);
+           ((float)dp->lrd_value) / SCALEEEEEE,
+           ((float)dp->lof_value) / SCALEEEEEE);
 }
 
 int main(int argc, char **argv)
@@ -97,7 +97,7 @@ int main(int argc, char **argv)
         printf("\n=== Flow Table ===\n");
         printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s \n",
                "STT", "SrcIP:Port",
-               "FlowDur(ms)", "TotalPkts", "TotalBytes", "MeanIAT(ms)",
+               "FlowDur(ns)", "TotalPkts", "TotalBytes", "MeanIAT(ns)",
                "k-dist", "reach[0]", "lrd", "lof");
 
         memset(&key, 0, sizeof(key));

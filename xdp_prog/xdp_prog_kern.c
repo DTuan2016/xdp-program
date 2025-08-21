@@ -11,9 +11,8 @@
 #include "common_kern_user.h"
 
 // #define INT32_MAX 2147483647
-#define NANOSEC_PER_SEC 1000000000ULL
-#define MAX_FLOW_SAVED  100
-#define SCALEEEEEE      1000
+#define NANOSEC_PER_SEC     1000000000ULL
+#define MAX_FLOW_SAVED      100
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
@@ -27,21 +26,6 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
-static __always_inline __u32 int_sqrt64(__u32 x)
-{
-    if (x == 0) return 0;
-
-    __u32 res = x;
-    __u32 prev = 0;
-
-    while (res != prev) {
-        prev = res;
-        res = (res + x / res) >> 1;  // Newton-Raphson
-    }
-    return res;
-}
-
-/*================= HELPERS =================*/
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                  struct flow_key *key,
                                                  __u64 *pkt_len)
@@ -114,8 +98,8 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
         /* init new entry */
         zero.start_ts = ts;      
         zero.last_seen = ts;     
-        zero.total_pkts = 1 + 10000;
-        zero.total_bytes = pkt_len + 10000;
+        zero.total_pkts = 1;
+        zero.total_bytes = pkt_len;
         zero.sum_IAT = 0;                  
         zero.flow_IAT_mean = 0;           
 
@@ -163,11 +147,24 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
     return 0;
 }
 
-// static __always_inline int clamp_to_int32(__u64 v)
-// {
-//     if (v > 0x7fffffffULL) return 0x7fffffff;
-//     return (int)v;
-// }
+/*================= HELPERS =================*/
+static __always_inline __u32 int_sqrt64(__u64 x)
+{
+    if (x == 0)
+        return 0;
+
+    __u64 res = x;
+    __u64 prev = 0;
+#pragma unroll
+    for (int i = 0; i < 6; i++) {
+        prev = res;
+        res = (res + x / res) >> 1;
+        if (res == prev)
+            break;
+    }
+    return res;
+}
+
 
 /*================= MATH (fixed) =================*/
 static __always_inline int32_t euclidean_distance_fixed(const data_point *a, const data_point *b)
@@ -180,37 +177,8 @@ static __always_inline int32_t euclidean_distance_fixed(const data_point *a, con
                  ((int64_t)b->last_seen - (int64_t)b->start_ts);
 
     int64_t sum_squares = fx*fx + fy*fy + fz*fz + fw*fw;
-    if (sum_squares > INT32_MAX) sum_squares = INT32_MAX;
+    if (sum_squares > INT64_MAX) sum_squares = INT64_MAX;
     int32_t ans = int_sqrt64((__u32)sum_squares);
-    // fixed fx_bytes_a = fixed_from_int(clamp_to_int32(a->total_bytes));
-    // fixed fx_bytes_b = fixed_from_int(clamp_to_int32(b->total_bytes));
-    // fixed fx_pkts_a  = fixed_from_int(clamp_to_int32(a->total_pkts));
-    // fixed fx_pkts_b  = fixed_from_int(clamp_to_int32(b->total_pkts));
-    // fixed fx_iat_a   = fixed_from_int(clamp_to_int32(a->flow_IAT_mean));
-    // fixed fx_iat_b   = fixed_from_int(clamp_to_int32(b->flow_IAT_mean));
-
-    // __u64 dur_a = (a->last_seen >= a->start_ts) ? (a->last_seen - a->start_ts) : 0;
-    // __u64 dur_b = (b->last_seen >= b->start_ts) ? (b->last_seen - b->start_ts) : 0;
-    // fixed fx_dur_a = fixed_from_int(clamp_to_int32(dur_a));
-    // fixed fx_dur_b = fixed_from_int(clamp_to_int32(dur_b));
-
-    bpf_printk("[DISTANCE] A: bytes=%u, pkts=%u, iat=%u, dur=%llu", 
-               a->total_bytes, a->total_pkts, a->flow_IAT_mean, a->last_seen - a->start_ts);
-    bpf_printk("[DISTANCE] B: bytes=%u, pkts=%u, iat=%u, dur=%llu", 
-               b->total_bytes, b->total_pkts, b->flow_IAT_mean, b->last_seen - b->start_ts);
-
-    // fixed dx = fixed_sub(fx_bytes_a, fx_bytes_b);
-    // fixed dy = fixed_sub(fx_pkts_a, fx_pkts_b);
-    // fixed dz = fixed_sub(fx_iat_a, fx_iat_b);
-    // fixed dw = fixed_sub(fx_dur_a, fx_dur_b);
-
-    // fixed sx = fixed_mul(dx, dx);
-    // fixed sy = fixed_mul(dy, dy);
-    // fixed sz = fixed_mul(dz, dz);
-    // fixed sw = fixed_mul(dw, dw);
-    
-    // fixed result = fixed_sqrt(fixed_add(fixed_add(sx, sy), fixed_add(sz, sw)));
-    bpf_printk("[DISTANCE] Computed distance: %lld", ans);
     
     return ans;
 }
@@ -220,6 +188,12 @@ static __always_inline void init_reach_dist(int32_t *reach_dist) {
 #pragma unroll
     for (int i = 0; i < KNN; i++)
         reach_dist[i] = INT32_MAX; // init large
+}
+
+static __always_inline void persist_reach_dist(data_point *dst, const int32_t *src) {
+#pragma unroll
+    for (int i = 0; i < KNN; i++)
+        dst->reach_dist[i] = src[i];
 }
 
 static __always_inline void update_knn_distances(int32_t *reach_dist, int32_t dist) {
@@ -285,7 +259,8 @@ static __always_inline void compute_k_distance_and_lrd(data_point *target)
 
     bpf_printk("[LRD] Found %d neighbors", c.neighbor_count);
     bpf_printk("[LRD] Final reach_dist: [0]=%lld, [1]=%lld", reach_dist[0], reach_dist[1]);
-
+    
+    persist_reach_dist(target, reach_dist);
     target->k_distance = reach_dist[KNN - 1];
     bpf_printk("[LRD] K-distance (reach_dist[%d]): %lld", KNN-1, target->k_distance);
 
@@ -299,7 +274,7 @@ static __always_inline void compute_k_distance_and_lrd(data_point *target)
     if (reach_sum > 0) {
         target->lrd_value = (KNN * SCALEEEEEE) / reach_sum;  
         // target->lrd_value = fixed_div(fixed_from_int(KNN), reach_sum);
-        bpf_printk("[LRD] LRD = %d / %lld = %lld", KNN, reach_sum, target->lrd_value);
+        bpf_printk("[LRD] LRD = %d *%d / %lld = %lld", KNN, SCALEEEEEE, reach_sum, target->lrd_value);
     } else {
         target->lrd_value = 0;
         bpf_printk("[LRD] LRD = 0 (reach_sum was 0)");
@@ -326,7 +301,7 @@ static int compute_lof_callback(void *map, const void *key, void* value, void *c
                c->neighbor_count, neighbor->lrd_value, c->target->lrd_value);
 
     if(neighbor->lrd_value > 0 && c->target->lrd_value > 0) {
-        long ratio = neighbor->lrd_value / c->target->lrd_value;
+        long ratio = (SCALEEEEEE * neighbor->lrd_value) / c->target->lrd_value;
         // fixed ratio = fixed_div(neighbor->lrd_value, c->target->lrd_value);
         // c->ti_le_lrd = fixed_add(c->ti_le_lrd, ratio);
         c->ti_le_lrd = c->ti_le_lrd + ratio;
@@ -356,7 +331,7 @@ static __always_inline void compute_lof_for_target(data_point *target) {
 
     if (ctx.ti_le_lrd > 0) {
         // target->lof_value = fixed_div(ctx.ti_le_lrd, fixed_from_int(KNN));
-        target->lof_value = ctx.ti_le_lrd / KNN;
+        target->lof_value = (ctx.ti_le_lrd) / KNN;
         bpf_printk("[LOF] Final LOF = %lld / %d = %lld", ctx.ti_le_lrd, KNN, target->lof_value);
     } else {
         target->lof_value = 0;

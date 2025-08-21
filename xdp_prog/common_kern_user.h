@@ -5,48 +5,36 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
+#define KNN             2
+#define FIXED_SHIFT     16
+#define SCALEEEEEE      1000000000
+#define FIXED_SCALE     (1 << FIXED_SHIFT)
 
-/* Configuration constants */
-#define KNN  2
-#define FIXED_SHIFT 16
-#define FIXED_SCALE (1 << FIXED_SHIFT)
-
-/* Fixed-point arithmetic type */
 typedef int32_t fixed;
 
 /* Flow identification key */
 struct flow_key {
     __u32 src_ip;
     __u16 src_port;
-    __u16 padding;  /* Explicit padding for alignment */
+    __u16 padding;  
 } __attribute__((packed));
 
 /* Flow statistics and anomaly detection data */
 typedef struct {
     /* Timing information */
-    __u64 start_ts;         /* Timestamp of first packet */
-    __u64 last_seen;        /* Timestamp of last packet */
+    __u64 start_ts;             /* Timestamp of first packet */
+    __u64 last_seen;            /* Timestamp of last packet */
     
-    /* Traffic statistics */
-    __u32 total_pkts;       /* Total packet count (Paccket/s)*/
-    __u32 total_bytes;      /* Total byte count (Bytes/s)*/
-    __u64 sum_IAT;          /* Sum of Inter-Arrival Times */
-    __u32 flow_IAT_mean;    /* Mean Inter-Arrival Time */
+    __u32 total_pkts;           /* Total packet count (Paccket/s)*/
+    __u32 total_bytes;          /* Total byte count (Bytes/s)*/
+    __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
+    __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
     
-    /* LOF (Local Outlier Factor) algorithm data */
-    // fixed k_distance;       /* k-distance value */
-    // fixed reach_dist[KNN];  /* Reachability distances to k neighbors */
-    // fixed lrd_value;        /* Local Reachability Density */
-    // fixed lof_value;        /* Local Outlier Factor score */
-
-    int32_t k_distance;       /* k-distance value */
-    int32_t reach_dist[KNN];  /* Reachability distances to k neighbors */
-    long lrd_value;        /* Local Reachability Density */
-    long lof_value;        /* Local Outlier Factor score */
+    int32_t k_distance;         /* k-distance value */
+    int32_t reach_dist[KNN];    /* Reachability distances to k neighbors */
+    long lrd_value;             /* Local Reachability Density */
+    long lof_value;             /* Local Outlier Factor score */
 } data_point;
-
-/* Fixed-point arithmetic functions */
-
 /* Convert float to fixed-point */
 static inline fixed fixed_from_float(float value)
 {
