@@ -12,6 +12,7 @@
 
 #define NANOSEC_PER_SEC 1000000000ULL
 #define MAX_FLOW_SAVED  100
+#define FIXED_INF (INT32_MAX)
 
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
@@ -97,8 +98,8 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
         bpf_printk("[STATS] Creating new flow entry for port %u", key->src_port);
         data_point zero = {};
         /* init new entry */
-        zero.start_ts = ts / 1000000;      // Convert ns → ms ngay từ đầu
-        zero.last_seen = ts / 1000000;     // Convert ns → ms
+        zero.start_ts = ts;      // Convert ns → ms ngay từ đầu
+        zero.last_seen = ts;     // Convert ns → ms
         zero.total_pkts = 1;
         zero.total_bytes = pkt_len;
         zero.sum_IAT = 0;                  // ms
@@ -121,7 +122,7 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
     }
 
     /* Update existing entry */
-    __u64 current_ms = ts / 1000000; // Convert to ms
+    __u64 current_ms = ts; // Convert to ms
     __u64 iat_ms = 0;
     
     if (dp->last_seen > 0 && current_ms >= dp->last_seen)
@@ -195,7 +196,7 @@ static __always_inline void init_reach_dist(fixed *reach_dist) {
     bpf_printk("[KNN] Initializing reach_dist array");
 #pragma unroll
     for (int i = 0; i < KNN; i++)
-        reach_dist[i] = fixed_from_int(100); // init large
+        reach_dist[i] = FIXED_INF; // init large
 }
 
 static __always_inline void update_knn_distances(fixed *reach_dist, fixed dist) {

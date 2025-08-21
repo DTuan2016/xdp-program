@@ -97,7 +97,7 @@ int main(int argc, char **argv)
         printf("\n=== Flow Table ===\n");
         printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s \n",
                "STT", "SrcIP:Port",
-               "FlowDur(ms)", "TotalPkts", "TotalBytes", "MeanIAT(ms)",
+               "FlowDur(us)", "TotalPkts", "TotalBytes", "MeanIAT(us)",
                "k-dist", "reach[0]", "lrd", "lof");
 
         memset(&key, 0, sizeof(key));

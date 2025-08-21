@@ -8,6 +8,7 @@
 
 /* Configuration constants */
 #define KNN  2
+// #define FIXED_N 3
 #define FIXED_SHIFT 16
 #define FIXED_SCALE (1 << FIXED_SHIFT)
 
@@ -91,7 +92,7 @@ static inline fixed fixed_mul(fixed a, fixed b)
 /* Fixed-point division */
 static inline fixed fixed_div(fixed a, fixed b)
 {
-    if (b == 0) 
+    if (b == 0)
         return 0;
     
     uint64_t ua = (a < 0) ? (uint64_t)(-(int64_t)a) : (uint64_t)a;
