@@ -7,7 +7,7 @@
 #include <stdint.h>
 #define KNN             2
 #define FIXED_SHIFT     16
-#define SCALEEEEEE      1000000000
+#define SCALEEEEEE      100
 #define FIXED_SCALE     (1 << FIXED_SHIFT)
 
 typedef int32_t fixed;
@@ -30,109 +30,11 @@ typedef struct {
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
     
-    int32_t k_distance;         /* k-distance value */
-    int32_t reach_dist[KNN];    /* Reachability distances to k neighbors */
-    long lrd_value;             /* Local Reachability Density */
-    long lof_value;             /* Local Outlier Factor score */
+    __u16 k_distance;            /* k-distance value */
+    __u16 reach_dist[KNN];       /* Reachability distances to k neighbors */
+    __u16 lrd_value;             /* Local Reachability Density */
+    __u16 lof_value;             /* Local Outlier Factor score */
 } data_point;
-/* Convert float to fixed-point */
-static inline fixed fixed_from_float(float value)
-{
-    return (fixed)(value * FIXED_SCALE);
-}
-
-/* Convert fixed-point to float */
-static inline float fixed_to_float(fixed value)
-{
-    return (float)value / FIXED_SCALE;
-}
-
-/* Convert integer to fixed-point */
-static inline fixed fixed_from_int(int value)
-{
-    return (fixed)(value << FIXED_SHIFT);
-}
-
-/* Convert fixed-point to integer */
-static inline int fixed_to_int(fixed value)
-{
-    return (int)(value >> FIXED_SHIFT);
-}
-
-/* Fixed-point addition */
-static inline fixed fixed_add(fixed a, fixed b)
-{
-    return a + b;
-}
-
-/* Fixed-point subtraction */
-static inline fixed fixed_sub(fixed a, fixed b)
-{
-    return a - b;
-}
-
-/* Fixed-point multiplication */
-static inline fixed fixed_mul(fixed a, fixed b)
-{
-    int64_t temp = (int64_t)a * (int64_t)b;
-    return (fixed)(temp >> FIXED_SHIFT);
-}
-
-/* Fixed-point division */
-static inline fixed fixed_div(fixed a, fixed b)
-{
-    if (b == 0) 
-        return 0;
-    
-    uint64_t ua = (a < 0) ? (uint64_t)(-(int64_t)a) : (uint64_t)a;
-    uint32_t ub = (b < 0) ? (uint32_t)(-(int)b) : (uint32_t)b;
-    uint64_t tmp = (ua << FIXED_SHIFT);
-    fixed res = (fixed)(tmp / ub);
-    
-    if ((a ^ b) < 0) 
-        res = -res;
-    
-    return res;
-}
-
-/* Fixed-point square root using Newton's method */
-static inline fixed fixed_sqrt(fixed value)
-{
-    if (value < 0) 
-        return 0;
-
-    fixed x = value;
-    for (int i = 0; i < 16; i++) {
-        x = fixed_div(fixed_add(x, fixed_div(value, x)), fixed_from_int(2));
-    }
-    return x;
-}
-
-/* Fixed-point absolute value */
-static inline fixed fixed_abs(fixed value)
-{
-    return (value < 0) ? -value : value;
-}
-
-/* Compare two fixed-point values */
-static inline int fixed_compare(fixed a, fixed b)
-{
-    if (a < b) return -1;
-    if (a > b) return 1;
-    return 0;
-}
-
-/* Fixed-point minimum */
-static inline fixed fixed_min(fixed a, fixed b)
-{
-    return (a < b) ? a : b;
-}
-
-/* Fixed-point maximum */
-static inline fixed fixed_max(fixed a, fixed b)
-{
-    return (a > b) ? a : b;
-}
 
 /* XDP action definitions for compatibility */
 #ifndef XDP_ACTION_MAX

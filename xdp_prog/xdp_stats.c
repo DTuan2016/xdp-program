@@ -45,15 +45,15 @@ static void print_flow_key(struct flow_key *key) {
 }
 
 static void print_data_point(data_point *dp) {
-    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12.8f | %-12.8f\n",
+    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12f | %-12f\n",
            dp->last_seen - dp->start_ts,
            dp->total_pkts,
            dp->total_bytes,
            dp->flow_IAT_mean,
            dp->k_distance,
            dp->reach_dist[0], // in demo chỉ in 1 giá trị đầu
-           ((float)dp->lrd_value) / SCALEEEEEE,
-           ((float)dp->lof_value) / SCALEEEEEE);
+           (float)dp->lrd_value / SCALEEEEEE,
+           (float)dp->lof_value / SCALEEEEEE);
 }
 
 int main(int argc, char **argv)
