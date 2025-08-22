@@ -5,7 +5,7 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#define KNN             2
+#define KNN             (2)
 #define FIXED_SHIFT     16
 #define SCALEEEEEE      100
 #define FIXED_SCALE     (1 << FIXED_SHIFT)
