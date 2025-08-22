@@ -18,7 +18,7 @@
 
 /* map */
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
@@ -206,7 +206,7 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     return (__u16)root;
 }
 
-/* init reach_dist (verifier-safe) */
+/* INTIT REACH-DIST */
 static __always_inline void init_reach_dist(int32_t *reach_dist)
 {
 #pragma unroll
@@ -214,7 +214,7 @@ static __always_inline void init_reach_dist(int32_t *reach_dist)
         reach_dist[i] = INT32_MAX;
 }
 
-/* persist */
+/* SAVE REACH-DIST TO data_point.reach-dist[i] */
 static __always_inline void persist_reach_dist(data_point *dst, const int32_t *src)
 {
 #pragma unroll
@@ -222,7 +222,7 @@ static __always_inline void persist_reach_dist(data_point *dst, const int32_t *s
         dst->reach_dist[i] = src[i];
 }
 
-/* update top-K distances; KNN must be compile-time constant and small */
+/* Update top-K distacne*/
 static __always_inline void update_knn_distances(int32_t *reach_dist, int32_t dist)
 {
 #pragma unroll
@@ -373,17 +373,15 @@ int xdp_print_all_flows(struct xdp_md *ctx)
         return XDP_PASS;
 
     compute_k_distance_and_lrd(target);
-    compute_lof_for_target(target);
-
     struct affected_ctx actx = {
         .target = target,
         .target_kdist = target->k_distance,
         .map = &xdp_flow_tracking,
         .affected_count = 0,
     };
-
     long ret = bpf_for_each_map_elem(&xdp_flow_tracking, update_affected_callback, &actx, 0);
     (void)ret;
+    compute_lof_for_target(target);
 
     return XDP_PASS;
 }
