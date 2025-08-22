@@ -154,6 +154,7 @@ static __always_inline int clamp_to_int32(__u64 v)
     if (v > 0x7fffffffULL) return 0x7fffffff;
     return (int)v;
 }
+static int update_affected_callback(void *map, const void *key, void *value, void *ctx);
 
 /*================= MATH (fixed) =================*/
 static __always_inline fixed euclidean_distance_fixed(const data_point *a, const data_point *b)
@@ -215,6 +216,15 @@ static __always_inline void update_knn_distances(fixed *reach_dist, fixed dist) 
     bpf_printk("[KNN] Current top-K: [0]=%lld, [1]=%lld", reach_dist[0], reach_dist[1]);
 }
 
+
+/*================= AFFECTED NEIGHBORS UPDATE =================*/
+struct affected_ctx {
+    data_point *target;
+    fixed target_kdist;
+    void *map;
+    int affected_count;
+};
+
 struct knn_ctx_local {
     data_point *target;
     fixed *reach_dist;
@@ -265,7 +275,7 @@ static __always_inline void compute_k_distance_and_lrd(data_point *target)
 
     target->k_distance = reach_dist[KNN - 1];
     bpf_printk("[LRD] K-distance (reach_dist[%d]): %lld", KNN-1, target->k_distance);
-
+    
     fixed reach_sum = 0;
 #pragma unroll
     for (int i = 0; i < KNN; i++)
@@ -337,13 +347,6 @@ static __always_inline void compute_lof_for_target(data_point *target) {
     }
 }
 
-/*================= AFFECTED NEIGHBORS UPDATE =================*/
-struct affected_ctx {
-    data_point *target;
-    fixed target_kdist;
-    void *map;
-    int affected_count;
-};
 
 static int update_affected_callback(void *map, const void *key, void *value, void *ctx) {
     struct affected_ctx *c = ctx;
