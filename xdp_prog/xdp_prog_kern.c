@@ -394,7 +394,6 @@ int xdp_print_all_flows(struct xdp_md *ctx)
     bpf_printk("[MAIN] Computing LOF for target flow port %u", key.src_port);
     
     compute_k_distance_and_lrd(target);
-    compute_lof_for_target(target);
 
     bpf_printk("[MAIN] Target results: k_dist=%lld, lrd=%lld, lof=%lld", 
                target->k_distance, target->lrd_value, target->lof_value);
@@ -414,6 +413,8 @@ int xdp_print_all_flows(struct xdp_md *ctx)
         bpf_printk("[MAIN] Updated %d affected neighbors", actx.affected_count);
     }
 
+    compute_lof_for_target(target);
+    
     __u32 ip_le = bpf_ntohl(key.src_ip);
     __u32 a = (ip_le >> 24) & 0xff;
     __u32 b = (ip_le >> 16) & 0xff;
