@@ -17,6 +17,7 @@
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
 
+/* LRU map: tracking flow -> feature/statistics */
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, struct flow_key);
@@ -25,14 +26,32 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
+/* Hash map: target flow -> danh sách k-RNN của target */
 struct{
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct flow_key);
-    __type(value, struct krnn_entries);
-    __uint(max_entries, UPDATE_MAX);
+    __type(value, struct krnn_entries);   /* <-- value là mảng e[UPDATE_MAX] */
+    __uint(max_entries, MAX_FLOW_SAVED);  /* <-- không phải UPDATE_MAX */
     __uint(pinning, LIBBPF_PIN_BY_NAME);
-}xdp_update SEC(".maps");
+} xdp_update SEC(".maps");
 
+/* Map debug để dump kết quả KNN[0] */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct knn_entry);
+} debug_knn SEC(".maps");
+
+/* BPF Array map chứa update_set */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, UPDATE_MAX);
+    __type(key, __u32);
+    __type(value, struct update_lrd_entry);
+} update_set_map SEC(".maps");
+
+/* ========================== PARSING ========================== */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                 struct flow_key *key,
                                                 __u64 *pkt_len)
@@ -52,8 +71,8 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         return -1;
 
     key->src_ip = iph->saddr;
-
     __u16 src_port = 0;
+
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
@@ -64,15 +83,18 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         if ((void *)(udph + 1) > data_end)
             return -1;
         src_port = udph->source;
-    } else {
-        src_port = 0;
     }
 
     key->src_port = bpf_ntohs(src_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
+
+    bpf_printk("parse_packet_get_data(): src_ip=%u src_port=%u pkt_len=%llu\n",
+               key->src_ip, key->src_port, *pkt_len);
+
     return 0;
 }
 
+/* ========================== CALCULATE LOG2(x) ========================== */
 static __always_inline __u8 ilog2_u64(__u64 x)
 {
     static const __u8 tbl[16] = {0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4};
@@ -92,7 +114,7 @@ static __always_inline __u8 ilog2_u64(__u64 x)
         return r + tbl[lo & 0xF];
     }
 }
-
+/* ========================== CALCULATE SQRT(x) ========================== */
 static __always_inline __u16 bpf_sqrt(__u32 x)
 {
     if (x == 0)
@@ -108,7 +130,7 @@ static __always_inline __u16 bpf_sqrt(__u32 x)
     }
     return res;
 }
-
+/* ========================== STATS ========================== */
 static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx)
 {
     __u64 ts = bpf_ktime_get_ns();
@@ -122,32 +144,27 @@ static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx
         zero.last_seen = ts;
         zero.total_pkts = 1;
         zero.total_bytes = pkt_len;
-        zero.sum_IAT = 0;
-        zero.flow_IAT_mean = 0;
-        zero.k_distance = 0;
-        zero.lrd_value = 0;
-        zero.lof_value = 0;
-        for (int i = 0; i < KNN; i++)
-            zero.reach_dist[i] = 0;
-
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return -1;
+        bpf_printk("update_stats(): new flow %u:%u -> pkts=1 bytes=%llu\n",
+                   key->src_ip, key->src_port, pkt_len);
         return 1;
     }
 
     __u64 iat_ns = (ts >= dp->last_seen) ? ts - dp->last_seen : 0;
     lock_xadd(&dp->total_pkts, 1);
     lock_xadd(&dp->total_bytes, pkt_len);
-
-    if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
-
+    if (iat_ns > 0) dp->sum_IAT += iat_ns;
     dp->last_seen = ts;
     dp->flow_IAT_mean = (dp->total_pkts > 1) ? dp->sum_IAT / (dp->total_pkts - 1) : 0;
 
+    bpf_printk("update_stats(): flow %u:%u pkts=%llu bytes=%llu meanIAT=%llu\n",
+               key->src_ip, key->src_port,
+               dp->total_pkts, dp->total_bytes, dp->flow_IAT_mean);
     return 0;
 }
 
+/* ========================== DISTANCE ========================== */
 static __always_inline __u16 euclidean_distance(const data_point *a, const data_point *b)
 {
     __u64 fx = (a->total_bytes > b->total_bytes) ? a->total_bytes - b->total_bytes : b->total_bytes - a->total_bytes;
@@ -165,79 +182,92 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;
     __u16 root = bpf_sqrt(sum);
 
+    bpf_printk("euclidean_distance(): sum=%u root=%u\n", sum, root);
     return (root > UINT16_MAX) ? UINT16_MAX : root;
 }
 
-static int callback_knn(void *map, const void *key, void *value, void *ctx)
+/* ========================== CALL BACK FOR KNN ========================== */
+static __always_inline int callback_knn(void *map, const void *key, void *value, void *ctx)
 {
     struct knn_context *c = ctx;
-    data_point *neighbor = value;
+    const data_point *neighbor = value;
 
-    if (!neighbor || __builtin_memcmp(key, c->target_key, sizeof(struct flow_key)) == 0)
+    /* stop if null or over limit */
+    if (!neighbor)
+        return 0;
+    if (c->processed++ >= c->limit)
+        return 1;
+
+    /* skip chính target */
+    if (__builtin_memcmp(key, c->target_key, sizeof(struct flow_key)) == 0)
         return 0;
 
-    __u16 dist = euclidean_distance(c->target, neighbor);
-    int index_max = 0;
-    __u16 dist_max = c->results[0].distance;
+    __u16 dist = euclidean_distance(c->target_dp, neighbor);
+
+    /* tìm index có distance lớn nhất trong KNN hiện tại */
+    int idx_max = 0;
+    __u16 dmax  = c->results[0].distance;
 #pragma unroll
     for (int i = 1; i < KNN; i++) {
-        if (c->results[i].distance > dist_max) {
-            dist_max = c->results[i].distance;
-            index_max = i;
+        if (c->results[i].distance > dmax) {
+            dmax = c->results[i].distance;
+            idx_max = i;
         }
     }
 
-    if (dist < dist_max) {
-        c->results[index_max].distance = dist;
-        __builtin_memcpy(&c->results[index_max].key, key, sizeof(struct flow_key));
+    if (dist < dmax) {
+        c->results[idx_max].distance = dist;
+        __builtin_memcpy(&c->results[idx_max].key, key, sizeof(struct flow_key));
     }
     return 0;
 }
 
+/* ========================== COMPUTE RECAH DIST ========================== */
 static __always_inline void compute_reach_dist(data_point *target_dp, struct knn_entry *results)
 {
+#pragma unroll
     for (int i = 0; i < KNN; i++) {
         if (results[i].distance == 0xffff)
             break;
 
-        data_point *neighbor_dp = bpf_map_lookup_elem(&xdp_flow_tracking, &results[i].key);
-        if (!neighbor_dp)
+        data_point *nbr = bpf_map_lookup_elem(&xdp_flow_tracking, &results[i].key);
+        if (!nbr)
             continue;
 
-        __u16 dist = euclidean_distance(target_dp, neighbor_dp);
-        target_dp->reach_dist[i] = (dist > neighbor_dp->k_distance) ? dist : neighbor_dp->k_distance;
+        __u16 dist = euclidean_distance(target_dp, nbr);
+        __u16 rd   = (dist > nbr->k_distance) ? dist : nbr->k_distance;
+        target_dp->reach_dist[i] = rd;
     }
 }
 
+/* ========================== FIND KNN ========================== */
 static __always_inline int find_knn(const struct flow_key *target_key,
-                                   data_point *target,
-                                   struct knn_entry *results)
+                                    data_point *target,
+                                    struct knn_entry *results)
 {
-    #pragma unroll
+#pragma unroll
     for (int i = 0; i < KNN; i++) {
         __builtin_memset(&results[i].key, 0, sizeof(struct flow_key));
         results[i].distance = 0xffff;
     }
 
-    struct knn_context ctx = {
+    struct knn_context c = {
         .target_key = target_key,
-        .target = target,
-        .results = results,
+        .target_dp  = target,
+        .results    = results,
+        .processed  = 0,
+        .limit      = MAX_FLOW_SAVED /* hoặc clamp nhỏ hơn nếu muốn */
     };
 
-    bpf_for_each_map_elem(&xdp_flow_tracking, callback_knn, &ctx, 0);
-    compute_reach_dist(target, ctx.results);
+    /* Duyệt tất cả entry nhưng dừng khi c.processed >= limit */
+    bpf_for_each_map_elem(&xdp_flow_tracking, callback_knn, &c, 0);
+
+    /* Tính reach_dist cho target theo KNN tìm được */
+    compute_reach_dist(target, results);
     return 0;
 }
 
-struct krnn_callback_ctx {
-    const struct flow_key *target_key;   /* flow đang xét */
-    const data_point *target_dp;         /* dữ liệu của flow target */
-    __u16 k_distance;                    /* khoảng cách k-NN hiện tại */
-    int K;                               /* số k lân cận */
-};
-
-/* Callback: kiểm tra xem target có nằm trong KNN của neighbor không */
+/* ========================== CALLBACK FOR KRNN ========================== */
 static int callback_krnn(void *map, const void *key, void *value, void *ctx)
 {
     struct krnn_callback_ctx *c = ctx;
@@ -276,7 +306,7 @@ static int callback_krnn(void *map, const void *key, void *value, void *ctx)
     }
     return 0;
 }
-
+/* ========================== FIND KRNN ========================== */
 static __always_inline int find_krnn(const struct flow_key *target_key,
                                     const data_point *target)
 {
@@ -287,7 +317,9 @@ static __always_inline int find_krnn(const struct flow_key *target_key,
         __builtin_memset(&empty[i].key, 0, sizeof(struct flow_key));
         empty[i].distance = 0xffff;
     }
-    bpf_map_update_elem(&xdp_update, target_key, empty, BPF_ANY);
+    int ret = bpf_map_update_elem(&xdp_update, target_key, empty, BPF_ANY);
+    bpf_printk("find_krnn(): init update set for %u:%u ret=%d\n",
+               target_key->src_ip, target_key->src_port, ret);
 
     /* Truyền target_key xuống callback */
     struct krnn_callback_ctx {
@@ -297,43 +329,101 @@ static __always_inline int find_krnn(const struct flow_key *target_key,
         .target_key = target_key,
         .target = target,
     };
+    bpf_printk("find_krnn(): start for %u:%u\n",
+               target_key->src_ip, target_key->src_port);
 
     bpf_for_each_map_elem(&xdp_flow_tracking, callback_krnn, &ctx, 0);
+      /* Đếm số neighbor thực sự đã insert */
+    int count = 0;
+    struct krnn_entry *kr = bpf_map_lookup_elem(&xdp_update, target_key);
+    if (kr) {
+#pragma unroll
+        for (int i = 0; i < UPDATE_MAX; i++) {
+            if (kr[i].distance != 0xffff) {
+                count++;
+                bpf_printk("find_krnn(): neighbor[%d]=%u:%u dist=%u\n",
+                           i, kr[i].key.src_ip, kr[i].key.src_port, kr[i].distance);
+            }
+        }
+    } else {
+        bpf_printk("find_krnn(): lookup update set failed for %u:%u\n",
+                   target_key->src_ip, target_key->src_port);
+    }
 
-    return 0;
+    bpf_printk("find_krnn(): found %d neighbors for %u:%u\n",
+               count, target_key->src_ip, target_key->src_port);
+
+    return count;
 }
 
-static __always_inline bool is_key_in_update_set(const struct flow_key *key, 
-                                                struct update_lrd_entry *update_set, 
-                                                int count)
+/* ========================== UPDATE-SET HELPERS (MAP) ========================== */
+static __always_inline void clear_update_set(void)
 {
-    #pragma unroll
-    for (int i = 0; i < count && i < UPDATE_MAX; i++) {
-        if (update_set[i].is_valid && 
-            __builtin_memcmp(key, &update_set[i].key, sizeof(struct flow_key)) == 0) {
+#pragma unroll
+    for (__u32 i = 0; i < UPDATE_MAX; i++) {
+        struct update_lrd_entry *slot = bpf_map_lookup_elem(&update_set_map, &i);
+        if (slot) {
+            slot->is_valid = false;
+            __builtin_memset(&slot->key, 0, sizeof(struct flow_key));
+        }
+    }
+    bpf_printk("clear_update_set(): reset all entries\n");
+}
+
+/* ========================== IS KEY IN UPDATE SET ========================== */
+static __always_inline bool is_key_in_update_set_map(const struct flow_key *key, int count)
+{
+#pragma unroll
+    for (int i = 0; i < UPDATE_MAX; i++) {
+        if (i >= count)
+            break;
+        __u32 idx = i;
+        struct update_lrd_entry *slot = bpf_map_lookup_elem(&update_set_map, &idx);
+        if (!slot)
+            continue;
+        if (slot->is_valid &&
+            __builtin_memcmp(&slot->key, key, sizeof(struct flow_key)) == 0) {
+            bpf_printk("is_key_in_update_set(): key %u:%u exists at %d\n",
+                       key->src_ip, key->src_port, i);
             return true;
         }
     }
     return false;
 }
 
-static __always_inline int add_to_update_set(const struct flow_key *key,
-                                            struct update_lrd_entry *update_set,
-                                            int *count,
-                                            int max_size)
+/* ========================== ADD TO UPDATE SET ========================== */
+static __always_inline int add_to_update_set_map(const struct flow_key *key,
+                                                 int *count,
+                                                 int max_size)
 {
-    if (*count >= max_size)
+    if (*count >= max_size) {
+        bpf_printk("add_to_update_set(): set full, cannot add key %u:%u\n",
+                   key->src_ip, key->src_port);
         return -1;
+    }
 
-    if (is_key_in_update_set(key, update_set, *count))
+    if (is_key_in_update_set_map(key, *count)) {
+        bpf_printk("add_to_update_set(): key %u:%u already in set\n",
+                   key->src_ip, key->src_port);
         return 0;
+    }
 
-    __builtin_memcpy(&update_set[*count].key, key, sizeof(struct flow_key));
-    update_set[*count].is_valid = true;
+    __u32 idx = *count;
+    struct update_lrd_entry *slot = bpf_map_lookup_elem(&update_set_map, &idx);
+    if (!slot) {
+        return -1;
+    }
+    __builtin_memcpy(&slot->key, key, sizeof(struct flow_key));
+    slot->is_valid = true;
+
+    bpf_printk("add_to_update_set(): added key %u:%u at index %u\n",
+               key->src_ip, key->src_port, idx);
+
     (*count)++;
     return 1;
 }
 
+/* ========================== CALL KNN FOR UPDATE ========================== */
 static int callback_knn_for_update(void *map, const void *key, void *value, void *ctx)
 {
     struct knn_for_update_context *c = ctx;
@@ -344,62 +434,82 @@ static int callback_knn_for_update(void *map, const void *key, void *value, void
 
     __u16 dist = euclidean_distance(c->target_dp, neighbor);
     if (dist <= c->target_dp->k_distance) {
-        add_to_update_set((const struct flow_key *)key, c->update_set, 
-                         c->update_count, c->max_size);
+        bpf_printk("callback_knn_for_update(): neighbor %u:%u within k-distance=%u (dist=%u)\n",
+                   ((struct flow_key *)key)->src_ip,
+                   ((struct flow_key *)key)->src_port,
+                   c->target_dp->k_distance,
+                   dist);
+        add_to_update_set_map((const struct flow_key *)key, c->update_count, c->max_size);
+    }
+    else{
+        bpf_printk("callback_knn_for_update(): neighbor %u:%u too far (dist=%u > k-dist=%u)\n",
+                   ((struct flow_key *)key)->src_ip,
+                   ((struct flow_key *)key)->src_port,
+                   dist, c->target_dp->k_distance);
     }
     return 0;
 }
 
-
-/* Từ target và các krnn trong map, xác định tập update LRD */
-static __always_inline int determine_update_lrd_set(const struct flow_key *target_key,
-                                                   const data_point *target_dp,
-                                                   struct update_lrd_entry *update_set)
+/* ========================== COMPUTE UPDATE LRD SET ========================== */
+/* ========================== DETERMINE UPDATE LRD SET (dùng map) ========================== */
+static __always_inline int determine_update_lrd_set_map(const struct flow_key *target_key,
+                                                        const data_point *target_dp)
 {
     int update_count = 0;
-    add_to_update_set(target_key, update_set, &update_count, UPDATE_MAX);
+    bpf_printk("determine_update_lrd_set(): start for target %u:%u\n",
+               target_key->src_ip, target_key->src_port);
 
-    /* Lấy tất cả krnn_entry trong map */
-    struct krnn_entry *kr;
-    // struct flow_key lookup_key = {};
-    __u32 i = 0;
+    clear_update_set();
+    add_to_update_set_map(target_key, &update_count, UPDATE_MAX);
+
+    /* lấy danh sách KRNN của target */
+    struct krnn_entry *kr = bpf_map_lookup_elem(&xdp_update, (void *)target_key);
+    if (!kr) {
+        bpf_printk("determine_update_lrd_set(): no krnn_entry found for target\n");
+        return update_count;
+    }
 
 #pragma unroll
-    for (i = 0; i < UPDATE_MAX; i++) {
-        /* ở đây giả sử target_key là key để lookup nhiều krnn_entry khác nhau */
-        kr = bpf_map_lookup_elem(&xdp_update, (void *)target_key);
-        if (!kr)
-            break;
-        if (kr->distance == 0xffff)
+    for (int i = 0; i < UPDATE_MAX; i++) {
+        if (kr[i].distance == 0xffff)
             break;
 
-        add_to_update_set(&kr->key, update_set, &update_count, UPDATE_MAX);
+        bpf_printk("determine_update_lrd_set(): krnn flow %u:%u dist=%u\n",
+                   kr[i].key.src_ip, kr[i].key.src_port, kr[i].distance);
 
-        /* lấy data_point của krnn để mở rộng tập update */
-        data_point *krnn_dp = bpf_map_lookup_elem(&xdp_flow_tracking, &kr->key);
-        if (!krnn_dp)
+        add_to_update_set_map(&kr[i].key, &update_count, UPDATE_MAX);
+
+        /* mở rộng thêm hàng xóm của krnn */
+        data_point *krnn_dp = bpf_map_lookup_elem(&xdp_flow_tracking, &kr[i].key);
+        if (!krnn_dp) {
+            bpf_printk("determine_update_lrd_set(): no datapoint for krnn %u:%u\n",
+                       kr[i].key.src_ip, kr[i].key.src_port);
             continue;
+        }
 
         struct knn_for_update_context ctx = {
-            .target_key = &kr->key,
+            .target_key = &kr[i].key,
             .target_dp = krnn_dp,
-            .update_set = update_set,
             .update_count = &update_count,
             .max_size = UPDATE_MAX,
-            .K = KNN
+            .limit = KNN
         };
+        bpf_printk("determine_update_lrd_set(): expanding neighbors for krnn %u:%u\n",
+                   kr[i].key.src_ip, kr[i].key.src_port);
+
         bpf_for_each_map_elem(&xdp_flow_tracking, callback_knn_for_update, &ctx, 0);
     }
 
+    bpf_printk("determine_update_lrd_set(): finished, update_count=%d\n", update_count);
     return update_count;
 }
 
-/* Tính LRD cho 1 data_point */
+
+/* ========================== LRD ========================== */
 static __always_inline void compute_lrd(data_point *dp, const struct flow_key *key)
 {
     __u64 sum_reach_dist = 0;
     int valid_neighbors = 0;
-
 #pragma unroll
     for (int i = 0; i < KNN; i++) {
         if (dp->reach_dist[i] > 0) {
@@ -407,32 +517,42 @@ static __always_inline void compute_lrd(data_point *dp, const struct flow_key *k
             valid_neighbors++;
         }
     }
-
     dp->lrd_value = (valid_neighbors > 0 && sum_reach_dist > 0) ?
-                    (__u16)(((__u64)valid_neighbors * 1000) / sum_reach_dist) : 0;
+                    (__u16)(((__u64)valid_neighbors * SCALEEEEEE) / sum_reach_dist) : 0;
+    bpf_printk("compute_lrd(): key %u:%u -> valid=%d sum=%llu lrd=%u\n",
+               key->src_ip, key->src_port,
+               valid_neighbors, sum_reach_dist, dp->lrd_value);
 }
 
-/* Update LRD cho các điểm trong update_set */
-static __always_inline void update_lrd_for_set(struct update_lrd_entry *update_set, 
-                                              int update_count)
+/* ========================== UPDATE LRD FOR SET (map) ========================== */
+static __always_inline void update_lrd_for_set_map(int update_count)
 {
 #pragma unroll
-    for (int i = 0; i < update_count && i < UPDATE_MAX; i++) {
-        if (!update_set[i].is_valid)
+    for (int i = 0; i < UPDATE_MAX; i++) {
+        if (i >= update_count)
+            break;
+
+        __u32 idx = i;
+        struct update_lrd_entry *slot = bpf_map_lookup_elem(&update_set_map, &idx);
+        if (!slot || !slot->is_valid)
             continue;
 
-        data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, &update_set[i].key);
+        data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, &slot->key);
         if (!dp)
             continue;
 
         struct knn_entry knn_results[KNN];
-        find_knn(&update_set[i].key, dp, knn_results);
-        compute_lrd(dp, &update_set[i].key);
+        find_knn(&slot->key, dp, knn_results);
+
+        bpf_printk("update_lrd_for_set(): recomputing LRD for key=%u:%u\n",
+                   slot->key.src_ip, slot->key.src_port);
+
+        compute_lrd(dp, &slot->key);
+        bpf_printk(" -> new LRD=%u\n", dp->lrd_value);
     }
 }
 
-
-/* Tính LOF */
+/* ========================== COMPUTE LOF ========================== */
 static __always_inline void compute_lof(data_point *dp, 
                                        const struct flow_key *key,
                                        struct knn_entry *knn_results)
@@ -450,69 +570,71 @@ static __always_inline void compute_lof(data_point *dp,
             continue;
 
         if (dp->lrd_value > 0 && neighbor_dp->lrd_value > 0) {
-            __u64 ratio = ((__u64)neighbor_dp->lrd_value * 1000) / dp->lrd_value;
+            __u64 ratio = ((__u64)neighbor_dp->lrd_value * SCALEEEEEE) / dp->lrd_value;
             sum_lrd_ratio += ratio;
             valid_neighbors++;
+            bpf_printk("compute_lof(): neighbor[%d] %u:%u lrd=%u ratio=%llu\n",
+                       i, knn_results[i].key.src_ip, knn_results[i].key.src_port,
+                       neighbor_dp->lrd_value, ratio);
         }
     }
 
     dp->lof_value = (valid_neighbors > 0) ? (__u16)(sum_lrd_ratio / valid_neighbors) : 1000;
+    bpf_printk("compute_lof(): flow %u:%u -> LOF=%u\n",
+               key->src_ip, key->src_port, dp->lof_value);
 }
 
-/* Update LOF cho update_set */
-static __always_inline void update_lof_for_set(struct update_lrd_entry *update_set, 
-                                              int update_count)
+/* ========================== UPDATE LOF FOR SET (map) ========================== */
+static __always_inline void update_lof_for_set_map(int update_count)
 {
 #pragma unroll
-    for (int i = 0; i < update_count && i < UPDATE_MAX; i++) {
-        if (!update_set[i].is_valid)
+    for (int i = 0; i < UPDATE_MAX; i++) {
+        if (i >= update_count)
+            break;
+
+        __u32 idx = i;
+        struct update_lrd_entry *slot = bpf_map_lookup_elem(&update_set_map, &idx);
+        if (!slot || !slot->is_valid)
             continue;
 
-        data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, &update_set[i].key);
-        if (!dp)
-            continue;
+        bpf_printk("update_lof_for_set(): processing flow %u:%u\n",
+                   slot->key.src_ip, slot->key.src_port);
 
+        data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, &slot->key);
+        if (!dp){
+            bpf_printk(" -> data_point not found for LOF update\n");
+            continue;
+        }
         struct knn_entry knn_results[KNN];
-        find_knn(&update_set[i].key, dp, knn_results);
-        compute_lof(dp, &update_set[i].key, knn_results);
+        find_knn(&slot->key, dp, knn_results);
+        compute_lof(dp, &slot->key, knn_results);
     }
 }
 
-/* bước 1: update LRD */
+/* ========================== UPDATE LRD STEP ========================== */
 static __always_inline int lof_update_lrd_step(const struct flow_key *target_key,
                                               const data_point *target_dp)
 {
-    struct update_lrd_entry update_set[UPDATE_MAX];
-#pragma unroll
-    for (int i = 0; i < UPDATE_MAX; i++) {
-        __builtin_memset(&update_set[i].key, 0, sizeof(struct flow_key));
-        update_set[i].is_valid = false;
-    }
+    int update_count = determine_update_lrd_set_map(target_key, target_dp);
+    bpf_printk("lof_update_lrd_step(): target=%u:%u update_count=%d\n",
+               target_key->src_ip, target_key->src_port, update_count);
 
-    int update_count = determine_update_lrd_set(target_key, target_dp, update_set);
     if (update_count <= 0)
         return -1;
 
-    update_lrd_for_set(update_set, update_count);
+    update_lrd_for_set_map(update_count);
     return update_count;
 }
 
-/* bước 2: update LOF */
+/* ========================== FINAL LOF STEP ========================== */
 static __always_inline int lof_final_step(const struct flow_key *target_key,
                                          data_point *target_dp)
 {
-    struct update_lrd_entry update_lof_set[UPDATE_MAX];
-    int update_lof_count = 0;
+    int update_lof_count = determine_update_lrd_set_map(target_key, target_dp);
+    bpf_printk("lof_final_step(): target=%u:%u lof_update_count=%d\n",
+               target_key->src_ip, target_key->src_port, update_lof_count);
 
-#pragma unroll
-    for (int i = 0; i < UPDATE_MAX; i++) {
-        __builtin_memset(&update_lof_set[i].key, 0, sizeof(struct flow_key));
-        update_lof_set[i].is_valid = false;
-    }
-
-    update_lof_count = determine_update_lrd_set(target_key, target_dp, update_lof_set);
-
-    update_lof_for_set(update_lof_set, update_lof_count);
+    update_lof_for_set_map(update_lof_count);
 
     struct knn_entry target_knn[KNN];
     find_knn(target_key, target_dp, target_knn);
@@ -521,66 +643,83 @@ static __always_inline int lof_final_step(const struct flow_key *target_key,
     return 0;
 }
 
-/* entry point cho incremental LOF */
+/* ========================== INCREMENTAL LOF ========================== */
 static __always_inline int incremental_lof_insertion(const struct flow_key *target_key,
                                                     data_point *target_dp)
 {
-    // dùng map xdp_update để lưu kết quả krnn
     int krnn_count = find_krnn(target_key, target_dp);
+    bpf_printk("incremental_lof_insertion(): target=%u:%u krnn_count=%d\n",
+               target_key->src_ip, target_key->src_port, krnn_count);
 
-    if (krnn_count <= 0)
+    if (krnn_count <= 0) {
+        bpf_printk("incremental_lof_insertion(): skip, krnn_count <= 0 for flow %u:%u\n",
+                   target_key->src_ip, target_key->src_port);
         return -1;
+    }
 
-    // update LRD trước
     int lrd_updated = lof_update_lrd_step(target_key, target_dp);
-    if (lrd_updated < 0)
-        return -1;
+    bpf_printk("incremental_lof_insertion(): lof_update_lrd_step() returned %d for flow %u:%u\n",
+               lrd_updated, target_key->src_ip, target_key->src_port);
 
-    // update LOF
-    return lof_final_step(target_key, target_dp);
+    if (lrd_updated < 0) {
+        bpf_printk("incremental_lof_insertion(): error updating LRD for flow %u:%u\n",
+                   target_key->src_ip, target_key->src_port);
+        return -1;
+    }
+
+    int lof_result = lof_final_step(target_key, target_dp);
+    bpf_printk("incremental_lof_insertion(): lof_final_step() returned %d for flow %u:%u\n",
+               lof_result, target_key->src_ip, target_key->src_port);
+
+    return lof_result;
 }
 
-/* Kiểm tra flow có phải bất thường hay không dựa trên LOF */
+/* ========================== CHECK IS ANOMALY ========================== */
 static __always_inline bool is_anomaly(const data_point *dp, __u16 threshold)
 {
     return dp->lof_value > threshold;
 }
 
-/* Thực hiện chèn điểm mới vào mô hình LOF + kiểm tra bất thường */
+/* ========================== DETECT ========================== */
 static __always_inline int detect_anomaly_lof(struct flow_key *key,
                                              struct xdp_md *ctx,
                                              __u16 anomaly_threshold)
 {
-    /* Tìm data_point tương ứng trong flow_tracking */
-    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
-    if (!dp || dp->total_pkts < 3)
-        return 0;  /* không đủ dữ liệu để tính LOF */
+    bpf_printk("detect_anomaly_lof(): CALLED for flow %u:%u\n",
+               key->src_ip, key->src_port);
 
-    /* Cập nhật incremental LOF cho flow */
+    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
+    if (!dp) {
+        bpf_printk("detect_anomaly_lof(): dp NULL for flow %u:%u\n",
+                   key->src_ip, key->src_port);
+        return 0;
+    }
+
+    if (dp->total_pkts < 3) {
+        bpf_printk("detect_anomaly_lof(): pkts=%llu < 3, skip flow %u:%u\n",
+                   dp->total_pkts, key->src_ip, key->src_port);
+        return 0;
+    }
+
     int result = incremental_lof_insertion(key, dp);
     if (result < 0)
         return 0;
 
-    /* So sánh LOF với ngưỡng để quyết định anomaly */
     return is_anomaly(dp, anomaly_threshold) ? 1 : 0;
 }
-
-/* Chương trình XDP chính */
+/* ========================== MAIN ========================== */
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
 
-    /* Parse packet ra flow_key */
     if (parse_packet_get_data(ctx, &key, &pkt_len) < 0)
         return XDP_PASS;
 
-    /* Cập nhật thống kê cho flow */
     if (update_stats(&key, ctx) < 0)
         return XDP_PASS;
 
-    /* Chạy phát hiện anomaly bằng LOF */
     int anomaly_detected = detect_anomaly_lof(&key, ctx, 1500);
     if (anomaly_detected) {
         data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, &key);
