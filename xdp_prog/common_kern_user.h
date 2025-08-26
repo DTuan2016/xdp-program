@@ -9,6 +9,7 @@
 #define FIXED_SHIFT     16
 #define SCALEEEEEE      100
 #define FIXED_SCALE     (1 << FIXED_SHIFT)
+#define DIST_THRESHOLD  30
 
 typedef int32_t fixed;
 
@@ -35,6 +36,21 @@ typedef struct {
     __u16 lrd_value;             /* Local Reachability Density */
     __u16 lof_value;             /* Local Outlier Factor score */
 } data_point;
+
+struct knn_entry {
+    struct flow_key key;
+    __u16 distance;
+};
+
+struct knn_entries{
+    struct knn_entry knn[KNN];
+};
+/* Context để truyền cho callback */
+struct knn_callback_ctx {
+    const struct flow_key *target_key;
+    data_point *target_dp;
+    struct knn_entries *entries;
+};
 
 /* XDP action definitions for compatibility */
 #ifndef XDP_ACTION_MAX
