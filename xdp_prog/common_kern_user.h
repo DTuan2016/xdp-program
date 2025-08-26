@@ -7,9 +7,9 @@
 #include <stdint.h>
 #define KNN             2
 #define FIXED_SHIFT     16
-#define SCALEEEEEE      100
-#define FIXED_SCALE     (1 << FIXED_SHIFT)
 #define DIST_THRESHOLD  30
+#define MAX_FLOW_SAVED  100
+#define WARM_UP_FOR_KNN 10
 
 typedef int32_t fixed;
 
@@ -30,11 +30,7 @@ typedef struct {
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
-    
-    __u16 k_distance;            /* k-distance value */
-    __u16 reach_dist[KNN];       /* Reachability distances to k neighbors */
-    __u16 lrd_value;             /* Local Reachability Density */
-    __u16 lof_value;             /* Local Outlier Factor score */
+    __u32 is_normal;            /*1 = normally, 0 = anomaly*/
 } data_point;
 
 struct knn_entry {

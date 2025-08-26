@@ -11,7 +11,6 @@
 #include "common_kern_user.h"
 
 #define NANOSEC_PER_SEC     1000000000ULL
-#define MAX_FLOW_SAVED      100
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
@@ -33,7 +32,16 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } maps_knn SEC(".maps");
 
-/* ---------------- PARSING ---------------- */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} flow_counter SEC(".maps");
+
+
+/* ==================== PARSING ==================== */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                  struct flow_key *key,
                                                  __u64 *pkt_len)
@@ -74,8 +82,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
-/* ---------------- utilities (verifier-safe) ---------------- */
-/* ilog2: if-chain, returns 0 for x==0 */
+/* ==================== LOF2(x) ==================== */
 static __always_inline __u8 ilog2_u64(__u64 x)
 {
     static const __u8 tbl[16] = {0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4};
@@ -113,60 +120,9 @@ static __always_inline __u16 bpf_sqrt(__u32 x)
     return res;
 }
 
-/* ---------------- stats update ---------------- */
-/* return 1 when new entry created, 0 on update, -1 on error */
-static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx, int is_fwd)
-{
-    __u64 ts      = bpf_ktime_get_ns();
-    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
-                            (__u8 *)((void *)(long)ctx->data));
-
-    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
-    if (!dp) {
-        data_point zero = {};
-        zero.start_ts = ts;
-        zero.last_seen = ts;
-        zero.total_pkts = 1;
-        zero.total_bytes = pkt_len;
-        zero.sum_IAT = 0;
-        zero.flow_IAT_mean = 0;
-        zero.k_distance = 0;
-#pragma unroll
-        for (int i = 0; i < KNN; i++)
-            zero.reach_dist[i] = 0;
-        zero.lrd_value = 0;
-        zero.lof_value = 0;
-
-        if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
-            return -1;
-        return 1;
-    }
-
-    __u64 current_ns = ts;
-    __u64 iat_ns = 0;
-    if (dp->last_seen > 0 && current_ns >= dp->last_seen)
-        iat_ns = current_ns - dp->last_seen;
-
-    __sync_fetch_and_add(&dp->total_pkts, 1);
-    __sync_fetch_and_add(&dp->total_bytes, pkt_len);
-
-    if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
-
-    dp->last_seen = current_ns;
-
-    if (dp->total_pkts > 1)
-        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
-    else
-        dp->flow_IAT_mean = 0;
-
-    return 0;
-}
-
 /* ---------------- DISTANCE AND KNN HELPERS ---------------- */
 static __always_inline __u16 euclidean_distance(const data_point *a, const data_point *b)
 {
-    /* compute absolute differences using signed 64 for subtraction safety */
     __u64 fx, fy, fz, fw;
     if (a->total_bytes > b->total_bytes){ 
         fx = a->total_bytes - b->total_bytes;
@@ -198,13 +154,11 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
         fw = flow_dur_b - flow_dur_a;
     }
 
-    /* ilog2 result in [0..63] */
     __u8 dx = ( __u8 ) ilog2_u64(fx);
     __u8 dy = ( __u8 ) ilog2_u64(fy);
     __u8 dz = ( __u8 ) ilog2_u64(fz);
     __u8 dw = ( __u8 ) ilog2_u64(fw);
 
-    /* sum of squares -> fits in 32-bit (max ~4*63^2 = 15876) */
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;
 
     __u16 root = bpf_sqrt(sum);
@@ -213,7 +167,7 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
         return UINT16_MAX;
     return (__u16)root;
 }
-
+/*==================== INSERT KNN ====================*/
 static __always_inline void insert_knn(struct knn_entries *entries,
                                        __u16 dist,
                                        const struct flow_key *neighbor_key)
@@ -221,7 +175,6 @@ static __always_inline void insert_knn(struct knn_entries *entries,
 #pragma unroll
     for (int i = 0; i < KNN; i++) {
         if (dist < entries->knn[i].distance) {
-            // Dịch xuống để nhường chỗ
 #pragma unroll
             for (int j = KNN - 1; j > i; j--) {
                 entries->knn[j] = entries->knn[j - 1];
@@ -233,7 +186,7 @@ static __always_inline void insert_knn(struct knn_entries *entries,
     }
 }
 
-/* Callback chạy cho từng phần tử trong xdp_flow_tracking */
+/* ==================== CALL BACK FOR KNN ==================== */
 static __always_inline int callback_knn(void *map, const void *key, void *value, void *ctx)
 {
     struct knn_callback_ctx *c = ctx;
@@ -250,11 +203,11 @@ static __always_inline int callback_knn(void *map, const void *key, void *value,
     return 0;
 }
 
+/* ==================== FIND KNN AND STORES ==================== */
 static __always_inline void find_knn_and_store(const struct flow_key *target_key, data_point *target_dp)
 {
     struct knn_entries entries = {};
 
-    // init khoảng cách mặc định = "vô cực"
 #pragma unroll
     for (int i = 0; i < KNN; i++) {
         entries.knn[i].distance = 0xffff;
@@ -279,26 +232,18 @@ static __always_inline void find_knn_and_store(const struct flow_key *target_key
 /* ========================== ANOMALY DETECTION ========================== */
 static __always_inline int detect_anomaly(const struct flow_key *key, __u64 pkt_len)
 {
-    /* lấy datapoint của flow */
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
-        return 0; // chưa có dữ liệu, coi là normal
+        return 0;
     }
 
-    // update cơ bản
-    dp->total_pkts++;
-    dp->total_bytes += pkt_len;
-
-    // tìm KNN và lưu kết quả vào map
     find_knn_and_store(key, dp);
 
-    // lấy danh sách knn từ map
     struct knn_entries *entries = bpf_map_lookup_elem(&maps_knn, key);
     if (!entries) {
-        return 0; // không có KNN thì thôi
+        return 0;
     }
 
-    // tìm khoảng cách lớn nhất trong KNN
     __u16 max_dist = 0;
 #pragma unroll
     for (int i = 0; i < KNN; i++) {
@@ -307,37 +252,102 @@ static __always_inline int detect_anomaly(const struct flow_key *key, __u64 pkt_
         }
     }
 
-    // in ra log
     bpf_printk("flow %u:%u max_dist=%u\n", key->src_ip, key->src_port, max_dist);
 
-    // so với threshold
     if (max_dist > DIST_THRESHOLD) {
         bpf_printk("flow %u:%u anomaly detected! dist=%u\n", key->src_ip, key->src_port, max_dist);
         return 1;
     }
+    return 0;
+}
+/* ==================== UPDATE STATS ==================== */
+static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx, int is_fwd)
+{
+    __u64 ts      = bpf_ktime_get_ns();
+    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
+                            (__u8 *)((void *)(long)ctx->data));
 
+    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
+
+    if (!dp) {
+        // ===== FLOW MỚI =====
+        data_point zero = {};
+        zero.start_ts      = ts;
+        zero.last_seen     = ts;
+        zero.total_pkts    = 1;
+        zero.total_bytes   = pkt_len;
+        zero.sum_IAT       = 0;
+        zero.flow_IAT_mean = 0;
+        zero.is_normal     = 1;  
+        if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
+            return -1;
+
+        __u32 idx = 0;
+        __u32 *count = bpf_map_lookup_elem(&flow_counter, &idx);
+        if (count) {
+            (*count)++;
+            if (*count >= WARM_UP_FOR_KNN) {
+                data_point *new_dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
+                if (new_dp) {
+                    find_knn_and_store(key, new_dp);
+
+                    if (detect_anomaly(key, pkt_len)) {
+                        new_dp->is_normal = 0;  // anomaly
+                        return 2;
+                    } else {
+                        new_dp->is_normal = 1;  // bình thường
+                    }
+                }
+            }
+        }
+        return 1;
+    }
+
+    // ===== FLOW ĐÃ TỒN TẠI =====
+    __u64 current_ns = ts;
+    __u64 iat_ns = 0;
+    if (dp->last_seen > 0 && current_ns >= dp->last_seen)
+        iat_ns = current_ns - dp->last_seen;
+
+    dp->total_pkts++;
+    dp->total_bytes += pkt_len;
+
+    if (iat_ns > 0)
+        dp->sum_IAT += iat_ns;
+
+    dp->last_seen = current_ns;
+
+    if (dp->total_pkts > 1)
+        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+    else
+        dp->flow_IAT_mean = 0;
+
+    // detect sau khi update
+    if (detect_anomaly(key, pkt_len)) {
+        dp->is_normal = 0; // anomaly
+        return -2;
+    }
+
+    dp->is_normal = 1; // bình thường
     return 0;
 }
 
-/* ---------------- XDP program ---------------- */
+/* ==================== MAIN PROCESS ==================== */
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
 
-    if (parse_packet_get_data(ctx, &key, &pkt_len) < 0)
-        return XDP_PASS;
+    if (parse_packet_get_data(ctx, &key, &pkt_len) < 0) {
+        return XDP_PASS;  // không xử lý nếu parse fail
+    }
 
     update_stats(&key, ctx, 1);
 
-    /* anomaly detection */
-    int is_anomaly = detect_anomaly(&key, pkt_len);
-
-    if (is_anomaly) {
-        /* Nếu flow nghi ngờ thì drop */
-        return XDP_DROP;
-    }
+    // if (ret == 2 || ret == -2) {
+    //     return XDP_DROP;  
+    // }
 
     return XDP_PASS;
 }
