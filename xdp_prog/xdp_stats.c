@@ -200,7 +200,7 @@ int main(int argc, char **argv)
             key = next_key;
         }
 
-        if (flow_count >= MAX_FLOW_SAVED) {
+        if (flow_count >= 100) {
             // đủ dữ liệu => tính toán LOF
             calculate_lof_for_data(flows, flow_count);
 
