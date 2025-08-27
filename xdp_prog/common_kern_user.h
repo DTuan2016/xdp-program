@@ -7,9 +7,9 @@
 #include <stdint.h>
 #define KNN             2
 #define FIXED_SHIFT     16
-#define DIST_THRESHOLD  30
+#define DIST_THRESHOLD  10
 #define MAX_FLOW_SAVED  100
-#define WARM_UP_FOR_KNN 10
+#define WARM_UP_FOR_KNN 50
 
 typedef int32_t fixed;
 
