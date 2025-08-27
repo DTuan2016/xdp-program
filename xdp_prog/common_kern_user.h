@@ -5,11 +5,12 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#define KNN             2
-#define FIXED_SHIFT     16
-#define SCALEEEEEE      100
-#define FIXED_SCALE     (1 << FIXED_SHIFT)
-
+#include <math.h>
+#define KNN                 2
+#define SCALEEEEEE          1000
+#define MAX_FLOW_SAVED      100
+// #define ZERO                0
+#define LOF_THRESHOLD       1   // hoặc giá trị bạn muốn
 typedef int32_t fixed;
 
 /* Flow identification key */

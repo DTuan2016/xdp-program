@@ -11,12 +11,10 @@
 #include "common_kern_user.h"
 
 #define NANOSEC_PER_SEC     1000000000ULL
-#define MAX_FLOW_SAVED      100
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
 
-/* map */
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, struct flow_key);
@@ -25,7 +23,14 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
-/* ---------------- PARSING ---------------- */
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u32);
+} flow_counter SEC(".maps");
+
+/*==================== PARSING ====================*/
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                  struct flow_key *key,
                                                  __u64 *pkt_len)
@@ -66,8 +71,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
-/* ---------------- utilities (verifier-safe) ---------------- */
-/* ilog2: if-chain, returns 0 for x==0 */
+/*==================== CALCULATE LOF2(x) ====================*/
 static __always_inline __u8 ilog2_u64(__u64 x)
 {
     static const __u8 tbl[16] = {0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4};
@@ -88,6 +92,7 @@ static __always_inline __u8 ilog2_u64(__u64 x)
         return r + tbl[lo & 0xF];
     }
 }
+/*==================== CALCULATE SQRT(x) ====================*/
 static __always_inline __u16 bpf_sqrt(__u32 x)
 {
     if (x == 0)
@@ -105,284 +110,301 @@ static __always_inline __u16 bpf_sqrt(__u32 x)
     return res;
 }
 
-/* ---------------- stats update ---------------- */
-/* return 1 when new entry created, 0 on update, -1 on error */
-static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx, int is_fwd)
+/*==================== DISTANCE <EUCLIDEAN> ====================*/
+static __always_inline __u64 abs_diff_u64(__u64 a, __u64 b)
 {
-    __u64 ts      = bpf_ktime_get_ns();
-    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
-                            (__u8 *)((void *)(long)ctx->data));
-
-    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
-    if (!dp) {
-        data_point zero = {};
-        zero.start_ts = ts;
-        zero.last_seen = ts;
-        zero.total_pkts = 1;
-        zero.total_bytes = pkt_len;
-        zero.sum_IAT = 0;
-        zero.flow_IAT_mean = 0;
-        zero.k_distance = 0;
-#pragma unroll
-        for (int i = 0; i < KNN; i++)
-            zero.reach_dist[i] = 0;
-        zero.lrd_value = 0;
-        zero.lof_value = 0;
-
-        if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
-            return -1;
-        return 1;
-    }
-
-    __u64 current_ns = ts;
-    __u64 iat_ns = 0;
-    if (dp->last_seen > 0 && current_ns >= dp->last_seen)
-        iat_ns = current_ns - dp->last_seen;
-
-    __sync_fetch_and_add(&dp->total_pkts, 1);
-    __sync_fetch_and_add(&dp->total_bytes, pkt_len);
-
-    if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
-
-    dp->last_seen = current_ns;
-
-    if (dp->total_pkts > 1)
-        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
-    else
-        dp->flow_IAT_mean = 0;
-
-    return 0;
+    __s64 d = (__s64)a - (__s64)b;
+    return d < 0 ? -d : d;
 }
 
-/* ---------------- DISTANCE AND KNN HELPERS ---------------- */
 static __always_inline __u16 euclidean_distance(const data_point *a, const data_point *b)
 {
-    /* compute absolute differences using signed 64 for subtraction safety */
-    __u64 fx, fy, fz, fw;
-    if (a->total_bytes > b->total_bytes){ 
-        fx = a->total_bytes - b->total_bytes;
-    }
-    else {
-        fx = b->total_bytes - a->total_bytes;
-    }
+    __u64 fx = abs_diff_u64(a->total_bytes, b->total_bytes);
+    __u64 fy = abs_diff_u64(a->total_pkts,  b->total_pkts);
+    __u64 fz = abs_diff_u64(a->flow_IAT_mean, b->flow_IAT_mean);
 
-    if (a->total_pkts > b->total_pkts){ 
-        fy = a->total_pkts - b->total_pkts;
-    }
-    else {
-        fy = b->total_pkts - a->total_pkts;
-    }
-    if (a->flow_IAT_mean > b->flow_IAT_mean){ 
-        fz = a->flow_IAT_mean - b->flow_IAT_mean;
-    }
-    else {
-        fz = b->flow_IAT_mean - a->flow_IAT_mean;
-    }
-    
     __u64 flow_dur_a = a->last_seen - a->start_ts;
     __u64 flow_dur_b = b->last_seen - b->start_ts;
-
-    if (flow_dur_a > flow_dur_b){ 
-        fw = flow_dur_a - flow_dur_b;
-    }
-    else {
-        fw = flow_dur_b - flow_dur_a;
-    }
+    __u64 fw = abs_diff_u64(flow_dur_a, flow_dur_b);
 
     /* ilog2 result in [0..63] */
-    __u8 dx = ( __u8 ) ilog2_u64(fx);
-    __u8 dy = ( __u8 ) ilog2_u64(fy);
-    __u8 dz = ( __u8 ) ilog2_u64(fz);
-    __u8 dw = ( __u8 ) ilog2_u64(fw);
+    __u8 dx = (__u8)ilog2_u64(fx);
+    __u8 dy = (__u8)ilog2_u64(fy);
+    __u8 dz = (__u8)ilog2_u64(fz);
+    __u8 dw = (__u8)ilog2_u64(fw);
 
-    /* sum of squares -> fits in 32-bit (max ~4*63^2 = 15876) */
+    /* sum of squares -> fits in 32-bit */
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;
 
-    __u16 root = bpf_sqrt(sum);
+    __u32 root = bpf_sqrt(sum);
 
     if (root > UINT16_MAX)
         return UINT16_MAX;
     return (__u16)root;
 }
 
-/* INTIT REACH-DIST */
-static __always_inline void init_reach_dist(int32_t *reach_dist)
+/* =================== KNN FOR ONE POINT =================== */
+static __always_inline void init_knn(__u32 *knn_dist,
+                                     struct flow_key *knn_keys)
 {
 #pragma unroll
-    for (int i = 0; i < KNN; i++)
-        reach_dist[i] = INT32_MAX;
+    for (int i = 0; i < KNN; i++) {
+        knn_dist[i] = INT32_MAX;
+        knn_keys[i].src_ip = 0;
+        knn_keys[i].src_port = 0;
+    }
 }
 
-/* SAVE REACH-DIST TO data_point.reach-dist[i] */
-static __always_inline void persist_reach_dist(data_point *dst, const int32_t *src)
-{
-#pragma unroll
-    for (int i = 0; i < KNN; i++)
-        dst->reach_dist[i] = src[i];
-}
-
-/* Update top-K distacne*/
-static __always_inline void update_knn_distances(int32_t *reach_dist, int32_t dist)
+/* =================== UPDATE KNN =================== */
+static __always_inline void update_knn(__u32 *knn_dist,
+                                       struct flow_key *knn_keys,
+                                       __u32 dist,
+                                       const struct flow_key *new_key)
 {
 #pragma unroll
     for (int m = 0; m < KNN; m++) {
-        int32_t cur = reach_dist[m];
-        if (dist < cur) {
+        if (dist < knn_dist[m]) {
 #pragma unroll
-            for (int n = KNN - 1; n > m; n--)
-                reach_dist[n] = reach_dist[n - 1];
-            reach_dist[m] = dist;
+            for (int n = KNN - 1; n > m; n--) {
+                knn_dist[n] = knn_dist[n - 1];
+                knn_keys[n] = knn_keys[n - 1];
+            }
+            knn_dist[m] = dist;
+            knn_keys[m] = *new_key;
             break;
         }
     }
 }
 
-/* knn scan callback - keep minimal, no printk inside */
-struct knn_ctx_local {
-    data_point *target;
-    int32_t *reach_dist;
-    int neighbor_count;
+/* =================== KNN CALLBACK =================== */
+struct knn_ctx {
+    data_point      *target;
+    __u32           *knn_dist;
+    struct flow_key *knn_keys;
 };
 
-static int knn_scan_cb(void *map, const void *key, void *value, void *ctx)
+static int knn_callback(void *map, const void *key, void *value, void *ctx)
 {
-    struct knn_ctx_local *c = ctx;
+    struct knn_ctx *c = ctx;
+    const struct flow_key *k = key;
     data_point *neighbor = value;
 
     if (!neighbor || neighbor == c->target)
         return 0;
 
-    c->neighbor_count++;
-    int32_t dist = euclidean_distance(c->target, neighbor);
-    update_knn_distances(c->reach_dist, dist);
+    __u32 dist = euclidean_distance(c->target, neighbor);
+    update_knn(c->knn_dist, c->knn_keys, dist, k);
     return 0;
 }
 
-static __always_inline void compute_k_distance_and_lrd(data_point *target)
+/* =================== COMPUTE K-DISTANCE =================== */
+static __always_inline __u32 compute_k_distance(const __u32 *knn_dist)
 {
-    int32_t reach_dist[KNN];
-    init_reach_dist(reach_dist);
+    return knn_dist[KNN - 1]; // farthest neighbor in KNN
+}
 
-    struct knn_ctx_local c = {
-        .target = target,
-        .reach_dist = reach_dist,
-        .neighbor_count = 0,
+/* =================== COMPUTE LRD =================== */
+static __always_inline __u32 compute_lrd_single(const data_point *target,
+                                                  const struct flow_key *knn_keys,
+                                                  const __u32 *knn_dist,
+                                                  int neighbor_count)
+{
+    long sum_reach = 0;
+    int used = 0;
+
+#pragma unroll
+    for (int i = 0; i < KNN; i++) {
+        if (i >= neighbor_count) break;
+        if (knn_keys[i].src_ip == 0 && knn_keys[i].src_port == 0) continue;
+
+        data_point *neighbor_dp = bpf_map_lookup_elem(&xdp_flow_tracking, &knn_keys[i]);
+        if (!neighbor_dp) continue;
+
+        // reach-dist(x,p) = max{k-distance(p), d(x,p)}
+        __u32 reach = knn_dist[i];
+        if (neighbor_dp->k_distance > reach)
+            reach = neighbor_dp->k_distance;
+
+        sum_reach += reach;
+        used++;
+    }
+
+    if (sum_reach > 0 && used > 0)
+        return (__u32)((used * SCALEEEEEE) / sum_reach);
+    return 0;
+}
+
+/* =================== COMPUTE LOF =================== */
+static __always_inline __u32 compute_lof_single(const struct flow_key *knn_keys,
+                                                  int neighbor_count,
+                                                  __u32 lrd_target)
+{
+    long ratio_sum = 0;
+    int used = 0;
+
+#pragma unroll
+    for (int i = 0; i < KNN; i++) {
+        if (i >= neighbor_count) break;
+        if (knn_keys[i].src_ip == 0 && knn_keys[i].src_port == 0) continue;
+
+        data_point *neighbor_dp = bpf_map_lookup_elem(&xdp_flow_tracking, &knn_keys[i]);
+        if (!neighbor_dp) continue;
+
+        __u32 lrd_n = neighbor_dp->lrd_value;
+        if (lrd_n > 0 && lrd_target > 0) {
+            ratio_sum += ((long)SCALEEEEEE * (long)lrd_n) / (long)lrd_target;
+            used++;
+        }
+    }
+
+    if (used > 0)
+        return (__u32)(ratio_sum / used);
+    return 0;
+}
+
+/* =================== FULL PIPELINE FOR NEW FLOW =================== */
+static __always_inline void calculate_lof_for_new_flow(data_point *target)
+{
+    __u32 knn_dist[KNN];
+    struct flow_key knn_keys[KNN];
+
+    init_knn(knn_dist, knn_keys);
+
+    struct knn_ctx c = {
+        .target   = target,
+        .knn_dist = knn_dist,
+        .knn_keys = knn_keys,
     };
 
-    long it = bpf_for_each_map_elem(&xdp_flow_tracking, knn_scan_cb, &c, 0);
+    // scan all baseline flows
+    long it = bpf_for_each_map_elem(&xdp_flow_tracking, knn_callback, &c, 0);
     if (it < 0)
         return;
 
-    persist_reach_dist(target, reach_dist);
-    target->k_distance = reach_dist[KNN - 1];
+    target->k_distance = compute_k_distance(knn_dist);
+    target->lrd_value  = compute_lrd_single(target, knn_keys, knn_dist, KNN);
+    target->lof_value  = compute_lof_single(knn_keys, KNN, target->lrd_value);
+}
 
-    int32_t reach_sum = 0;
+/*==================== UPDATE STATS (INFERENCE MODE) ====================*/
+static __always_inline int update_stats(struct flow_key *key, struct xdp_md *ctx, int is_fwd)
+{
+    __u64 ts      = bpf_ktime_get_ns();
+    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
+                            (__u8 *)((void *)(long)ctx->data));
+    __u32 idx0 = 0;
+    __u32 *count_ptr = bpf_map_lookup_elem(&flow_counter, &idx0);
+    if (!count_ptr) {
+        bpf_printk("flow_counter not initialized");
+        return -1;
+    }
+    __u32 count = *count_ptr;
+
+    data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
+
+    if (count < MAX_FLOW_SAVED) {
+        /* === BUILDING BASELINE DATASET === */
+        if (dp) {
+            // Flow đã tồn tại, update thống kê
+            __u64 iat_ns = (ts > dp->last_seen) ? ts - dp->last_seen : 0;
+            dp->last_seen = ts;
+            __sync_fetch_and_add(&dp->total_pkts, 1);
+            __sync_fetch_and_add(&dp->total_bytes, pkt_len);
+            if (iat_ns > 0)
+                dp->sum_IAT += iat_ns;
+            if (dp->total_pkts > 1)
+                dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+            else
+                dp->flow_IAT_mean = 0;
+
+            bpf_printk("Baseline flow updated: pkts=%llu bytes=%llu",
+                       dp->total_pkts, dp->total_bytes);
+        } else {
+            // Flow mới, thêm vào baseline
+            data_point zero = {};
+            zero.start_ts    = ts;
+            zero.last_seen   = ts;
+            zero.total_pkts  = 1;
+            zero.total_bytes = pkt_len;
+            zero.sum_IAT     = 0;
+            zero.flow_IAT_mean = 0;
+            zero.k_distance  = 0;
 #pragma unroll
-    for (int i = 0; i < KNN; i++)
-        reach_sum += reach_dist[i];
+            for (int i = 0; i < KNN; i++)
+                zero.reach_dist[i] = 0;
+            zero.lrd_value   = 0;
+            zero.lof_value   = 0;
 
-    if (reach_sum > 0)
-        target->lrd_value = (KNN * SCALEEEEEE) / reach_sum;
-    else
-        target->lrd_value = 0;
-}
-
-/* LOF callback & compute (minimal, no prints) */
-struct lof_ctx {
-    data_point *target;
-    long ti_le_lrd;
-    int neighbor_count;
-};
-
-static int compute_lof_callback(void *map, const void *key, void* value, void *ctx)
-{
-    struct lof_ctx *c = ctx;
-    data_point *neighbor = value;
-
-    if (!neighbor || neighbor == c->target)
+            if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) == 0) {
+                __sync_fetch_and_add(count_ptr, 1);
+                bpf_printk("Baseline flow inserted (count=%u)", *count_ptr);
+            } else {
+                bpf_printk("!! Failed to insert baseline flow");
+            }
+        }
         return 0;
-
-    c->neighbor_count++;
-
-    if (neighbor->lrd_value > 0 && c->target->lrd_value > 0) {
-        long ratio = (SCALEEEEEE * neighbor->lrd_value) / c->target->lrd_value;
-        c->ti_le_lrd += ratio;
     }
-    return 0;
-}
 
-static __always_inline void compute_lof_for_target(data_point *target)
-{
-    struct lof_ctx ctx = {
-        .target = target,
-        .ti_le_lrd = 0,
-        .neighbor_count = 0,
-    };
+    /* === INFERENCE MODE === */
+    if (dp) {
+        // Flow đã có trong baseline -> update tiếp, không inference
+        __u64 iat_ns = (ts > dp->last_seen) ? ts - dp->last_seen : 0;
+        dp->last_seen = ts;
+        __sync_fetch_and_add(&dp->total_pkts, 1);
+        __sync_fetch_and_add(&dp->total_bytes, pkt_len);
+        if (iat_ns > 0)
+            dp->sum_IAT += iat_ns;
+        if (dp->total_pkts > 1)
+            dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+        else
+            dp->flow_IAT_mean = 0;
 
-    long ret = bpf_for_each_map_elem(&xdp_flow_tracking, compute_lof_callback, &ctx, 0);
-    if (ret < 0)
-        return;
-
-    if (ctx.ti_le_lrd > 0)
-        target->lof_value = (ctx.ti_le_lrd) / KNN;
-    else
-        target->lof_value = 0;
-}
-
-/* update affected callback - minimal */
-struct affected_ctx {
-    data_point *target;
-    int32_t target_kdist;
-    void *map;
-    int affected_count;
-};
-
-static int update_affected_callback(void *map, const void *key, void *value, void *ctx)
-{
-    struct affected_ctx *c = ctx;
-    data_point *neighbor = value;
-
-    if (!neighbor || neighbor == c->target)
+        bpf_printk("Baseline flow (existing) updated in inference mode");
         return 0;
+    } else {
+        // Flow mới hoàn toàn -> chỉ inference
+        data_point tmp = {};
+        tmp.start_ts    = ts;
+        tmp.last_seen   = ts;
+        tmp.total_pkts  = 1;
+        tmp.total_bytes = pkt_len;
+        tmp.sum_IAT     = 0;
+        tmp.flow_IAT_mean = 0;
+        tmp.k_distance  = 0;
+#pragma unroll
+        for (int i = 0; i < KNN; i++)
+            tmp.reach_dist[i] = 0;
+        tmp.lrd_value   = 0;
+        tmp.lof_value   = 0;
 
-    int32_t dist = euclidean_distance(c->target, neighbor);
+        calculate_lof_for_new_flow(&tmp);
 
-    if (dist <= c->target_kdist) {
-        c->affected_count++;
-        compute_k_distance_and_lrd(neighbor);
-        compute_lof_for_target(neighbor);
+        bpf_printk("Inference flow: k_dist=%d, lrd=%d, lof=%d",
+                   tmp.k_distance, tmp.lrd_value, tmp.lof_value);
+
+        if (tmp.lof_value > LOF_THRESHOLD) {
+            bpf_printk("ANOMALY DETECTED: LOF=%d > THRESH=%d",
+                       tmp.lof_value, LOF_THRESHOLD);
+            return -1;
+        }
+        return 0;
     }
-    return 0;
 }
 
-/* ---------------- XDP program ---------------- */
+/* =================== XDP PROGRAM =================== */
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
-
     if (parse_packet_get_data(ctx, &key, &pkt_len) < 0)
         return XDP_PASS;
 
-    update_stats(&key, ctx, 1);
-
-    data_point *target = bpf_map_lookup_elem(&xdp_flow_tracking, &key);
-    if (!target)
-        return XDP_PASS;
-
-    compute_k_distance_and_lrd(target);
-    struct affected_ctx actx = {
-        .target = target,
-        .target_kdist = target->k_distance,
-        .map = &xdp_flow_tracking,
-        .affected_count = 0,
-    };
-    long ret = bpf_for_each_map_elem(&xdp_flow_tracking, update_affected_callback, &actx, 0);
-    (void)ret;
-    compute_lof_for_target(target);
-
+    int ret = update_stats(&key, ctx, 1);
+    if(ret == -1){
+        bpf_printk("ANOMALY");
+        return XDP_DROP;
+    }
     return XDP_PASS;
 }
 
