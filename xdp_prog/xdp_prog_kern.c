@@ -44,6 +44,10 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
         return -1;
+    /* Nếu là LLDP (EtherType = 0x88CC) thì drop */
+    if (eth->h_proto == bpf_htons(0x88CC)) {
+        return -2;  /* giá trị đặc biệt để main biết drop */
+    }
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
         return -1;
@@ -137,7 +141,7 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     __u8 dw = (__u8)ilog2_u64(fw);
     bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu | dx=%u dy=%u dz=%u dw=%u\n",
                fx, fy, fz, fw, dx, dy, dz, dw);
-    __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;\
+    __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;
     __u16 res = bpf_sqrt(sum);
     bpf_printk("DIST sqrt=%u\n", res);
     return res;
@@ -298,7 +302,13 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     struct flow_key key = {};
     __u64 pkt_len = 0;
 
-    if (parse_packet_get_data(ctx, &key, &pkt_len) < 0)
+    int ret = parse_packet_get_data(ctx, &key, &pkt_len);
+    if (ret == -2) {
+        bpf_printk("DROP LLDP frame\n");
+        return XDP_DROP;  /* drop luôn */
+    }
+
+    if (ret < 0)
         return XDP_PASS;
 
     /* Cập nhật stats và lấy con trỏ dp (lookup 1 lần) */
@@ -309,11 +319,12 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     /* Chỉ detect sau khi warm-up */
     __u32 idx = 0;
     __u32 *count = bpf_map_lookup_elem(&flow_counter, &idx);
-    if (count && *count >= WARM_UP_FOR_KNN) {
+    if (count && *count > WARM_UP_FOR_KNN) {
         int anomaly = detect_anomaly(&key, dp);
         if (anomaly) {
             dp->is_normal = 0;
-            return XDP_DROP;
+            bpf_printk("PHAT HIEN BAT THUONG O DAY %d:%d", key.src_ip, key.src_port);
+            return XDP_PASS;
         } else {
             dp->is_normal = 1;
         }

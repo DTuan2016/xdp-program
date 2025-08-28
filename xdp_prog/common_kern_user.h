@@ -5,8 +5,8 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#define KNN             2
-#define DIST_THRESHOLD  30
+#define KNN             7
+#define DIST_THRESHOLD  18
 #define MAX_FLOW_SAVED  200
 #define WARM_UP_FOR_KNN 100
 
@@ -33,7 +33,7 @@ typedef struct {
     /* Timing information */
     __u64 start_ts;             /* Timestamp of first packet */
     __u64 last_seen;            /* Timestamp of last packet */
-    
+    __u64 flow_duration;
     __u32 total_pkts;           /* Total packet count (Paccket/s)*/
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */

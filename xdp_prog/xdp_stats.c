@@ -109,9 +109,7 @@ int main(int argc, char **argv)
             }
             key = next_key;
         }
-
         sleep(1); // dump mỗi giây
     }
-
     return EXIT_OK;
 }
