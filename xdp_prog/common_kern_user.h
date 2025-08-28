@@ -6,10 +6,9 @@
 
 #include <stdint.h>
 #define KNN             2
-#define FIXED_SHIFT     16
-#define DIST_THRESHOLD  10
-#define MAX_FLOW_SAVED  100
-#define WARM_UP_FOR_KNN 50
+#define DIST_THRESHOLD  30
+#define MAX_FLOW_SAVED  200
+#define WARM_UP_FOR_KNN 100
 
 typedef int32_t fixed;
 
@@ -20,7 +19,16 @@ struct flow_key {
     __u16 padding;  
 } __attribute__((packed));
 
+struct knn_entry {
+    struct flow_key key;
+    __u16 distance;
+};
+
+struct knn_entries{
+    struct knn_entry knn[KNN];
+};
 /* Flow statistics and anomaly detection data */
+
 typedef struct {
     /* Timing information */
     __u64 start_ts;             /* Timestamp of first packet */
@@ -30,23 +38,16 @@ typedef struct {
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
+    struct knn_entries neighbors;
     __u32 is_normal;            /*1 = normally, 0 = anomaly*/
 } data_point;
 
-struct knn_entry {
-    struct flow_key key;
-    __u16 distance;
-};
-
-struct knn_entries{
-    struct knn_entry knn[KNN];
-};
 /* Context để truyền cho callback */
-struct knn_callback_ctx {
-    const struct flow_key *target_key;
-    data_point *target_dp;
-    struct knn_entries *entries;
-};
+// struct knn_callback_ctx {
+//     const struct flow_key *target_key;
+//     data_point *target_dp;
+//     struct knn_entries *entries;
+// };
 
 /* XDP action definitions for compatibility */
 #ifndef XDP_ACTION_MAX
