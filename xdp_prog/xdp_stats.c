@@ -64,11 +64,15 @@ static inline double safe_log2(double x) {
 
 /*==================== DISTANCE <EUCLIDEAN> ====================*/
 static double distance (data_point *a, data_point *b){
-    double f1 = safe_log2((double)a->total_bytes - (double)b->total_bytes);
-    double f2 = safe_log2((double)a->total_pkts - (double)b->total_pkts);
-    double f3 = safe_log2((double)a->flow_IAT_mean - (double)b->flow_IAT_mean);
-    double f4 = safe_log2((double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts));
-    return sqrt(f1*f1 + f2*f2 + f3*f3 + f4*f4);
+    double f1 = (double)a->total_bytes - (double)b->total_bytes;
+    double d1 = (f1 > 0) ? safe_log2(f1) : safe_log2(-f1);
+    double f2 = (double)a->total_pkts - (double)b->total_pkts;
+    double d2 = (f2 > 0) ? safe_log2(f2) : safe_log2(-f2);
+    double f3 = (double)a->flow_IAT_mean - (double)b->flow_IAT_mean;
+    double d3 = (f3 > 0) ? safe_log2(f3) : safe_log2(-f3);
+    double f4 = (double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts);
+    double d4 = (f4 > 0) ? safe_log2(f4) : safe_log2(-f4);
+    return sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4);
 }
 
 /*==================== COMPUTE DISTANCE MATRIX ====================*/

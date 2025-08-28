@@ -179,7 +179,6 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     else {
         fz = b->flow_IAT_mean - a->flow_IAT_mean;
     }
-    
     __u64 flow_dur_a = a->last_seen - a->start_ts;
     __u64 flow_dur_b = b->last_seen - b->start_ts;
 
