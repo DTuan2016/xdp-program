@@ -378,7 +378,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 
     __u32 idx = 0;
     __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
-    if (cnt && *cnt >= MAX_FLOW_SAVED) {
+    if (cnt && *cnt >= DATA_CAL_LOF) {
         compute_anomaly_for_target(&key, target);
     }
     return XDP_PASS;

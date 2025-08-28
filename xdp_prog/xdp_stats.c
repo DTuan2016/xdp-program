@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <net/if.h>
+#include <math.h>
 
 #include <bpf/libbpf.h> /* libbpf_num_possible_cpus */
 
@@ -56,12 +57,17 @@ static void print_data_point(data_point *dp) {
            (float)dp->lof_value / SCALEEEEEE);
 }
 
+/*==================== SAFE LOG2 ====================*/
+static inline double safe_log2(double x) {
+    return (x > 0) ? log2(x) : 0.0;  // tránh log2(0) hoặc âm
+}
+
 /*==================== DISTANCE <EUCLIDEAN> ====================*/
 static double distance (data_point *a, data_point *b){
-    double f1 = (double)a->total_bytes - (double)b->total_bytes;
-    double f2 = (double)a->total_pkts - (double)b->total_pkts;
-    double f3 = (double)a->flow_IAT_mean - (double)b->flow_IAT_mean;
-    double f4 = (double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts);
+    double f1 = safe_log2((double)a->total_bytes - (double)b->total_bytes);
+    double f2 = safe_log2((double)a->total_pkts - (double)b->total_pkts);
+    double f3 = safe_log2((double)a->flow_IAT_mean - (double)b->flow_IAT_mean);
+    double f4 = safe_log2((double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts));
     return sqrt(f1*f1 + f2*f2 + f3*f3 + f4*f4);
 }
 
@@ -200,7 +206,7 @@ int main(int argc, char **argv)
             key = next_key;
         }
 
-        if (flow_count >= 100) {
+        if (flow_count >= DATA_CAL_LOF) {
             // đủ dữ liệu => tính toán LOF
             calculate_lof_for_data(flows, flow_count);
 

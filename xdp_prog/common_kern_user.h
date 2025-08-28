@@ -8,6 +8,7 @@
 #include <math.h>
 #define KNN                 2
 #define SCALEEEEEE          1000
+#define DATA_CAL_LOF        50
 #define MAX_FLOW_SAVED      101
 // #define ZERO                0
 #define LOF_THRESHOLD       1   // hoặc giá trị bạn muốn
