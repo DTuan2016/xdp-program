@@ -210,7 +210,7 @@ int main(int argc, char **argv)
             key = next_key;
         }
 
-        if (flow_count >= DATA_CAL_LOF) {
+        if (flow_count == DATA_CAL_LOF) {
             // đủ dữ liệu => tính toán LOF
             calculate_lof_for_data(flows, flow_count);
 
@@ -237,6 +237,5 @@ int main(int argc, char **argv)
 
         sleep(1);
     }
-
     return EXIT_OK;
 }

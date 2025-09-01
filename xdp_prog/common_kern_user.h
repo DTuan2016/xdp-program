@@ -8,10 +8,10 @@
 #include <math.h>
 #define KNN                 2
 #define SCALEEEEEE          1000
-#define DATA_CAL_LOF        50
-#define MAX_FLOW_SAVED      101
+#define DATA_CAL_LOF        100
+#define MAX_FLOW_SAVED      200
 // #define ZERO                0
-#define LOF_THRESHOLD       1   // hoặc giá trị bạn muốn
+#define LOF_THRESHOLD       1.3   // hoặc giá trị bạn muốn
 typedef int32_t fixed;
 
 /* Flow identification key */
@@ -20,6 +20,11 @@ struct flow_key {
     __u16 src_port;
     __u16 padding;  
 } __attribute__((packed));
+
+struct knn_entry {
+    struct flow_key key;   /* flow láng giềng */
+    __u16 distance;        /* khoảng cách tới neighbor */
+};
 
 /* Flow statistics and anomaly detection data */
 typedef struct {
@@ -31,11 +36,14 @@ typedef struct {
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
-    
+    int   is_normal;
+
     __u16 k_distance;            /* k-distance value */
     __u16 reach_dist[KNN];       /* Reachability distances to k neighbors */
     __u16 lrd_value;             /* Local Reachability Density */
     __u16 lof_value;             /* Local Outlier Factor score */
+
+    struct knn_entry knn[KNN];
 } data_point;
 
 /* XDP action definitions for compatibility */
