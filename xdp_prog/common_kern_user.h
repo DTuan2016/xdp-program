@@ -5,8 +5,8 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#define KNN             7
-#define DIST_THRESHOLD  18
+#define KNN             5
+#define DIST_THRESHOLD  15
 #define MAX_FLOW_SAVED  200
 #define WARM_UP_FOR_KNN 100
 

@@ -58,22 +58,22 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
     key->src_ip = iph->saddr;
 
-    __u16 src_port = 0;
+    // __u16 src_port = 0;
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
             return -1;
-        src_port = tcph->source;
+        key->src_port = tcph->source;
     } else if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(udph + 1) > data_end)
             return -1;
-        src_port = udph->source;
+        key->src_port = udph->source;
     } else {
-        src_port = 0;
+        key->src_port = 0;
     }
 
-    key->src_port = bpf_ntohs(src_port);
+    // key->src_port = bpf_ntohs(src_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
 
     return 0;
