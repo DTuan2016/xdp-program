@@ -24,6 +24,14 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
+struct{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct flow_key);
+    __type(value, data_point);
+    __uint(max_entries, WARM_UP_FOR_KNN);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} flow_dropped SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
@@ -32,6 +40,13 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_counter SEC(".maps");
 
+struct{
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct flow_key);
+    __type(value, data_point);
+    __uint(max_entries, WARM_UP_FOR_KNN);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} benign_flows SEC(".maps");
 
 /* ==================== PARSING ==================== */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
@@ -184,7 +199,9 @@ static __always_inline int callback_knn(void *map, const void *key, void *value,
         return 0;
 
     __u16 dist = euclidean_distance(c->target_dp, neighbor);
-    insert_knn(c->entries, dist, k);
+    struct flow_key neighbor_key = *k;  // copy giá trị key
+    insert_knn(c->entries, dist, &neighbor_key);
+    // insert_knn(c->entries, dist, k);
     return 0;
 }
 
@@ -323,8 +340,12 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         int anomaly = detect_anomaly(&key, dp);
         if (anomaly) {
             dp->is_normal = 0;
-            bpf_printk("PHAT HIEN BAT THUONG O DAY %d:%d", key.src_ip, key.src_port);
-            return XDP_PASS;
+            bpf_printk("ANOMALY DETECTED %d:%d", key.src_ip, key.src_port);
+            data_point local_dp = {};
+            __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+            bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
+            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
+            return XDP_DROP;
         } else {
             dp->is_normal = 1;
         }
