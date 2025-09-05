@@ -25,6 +25,15 @@ struct {
 } xdp_flow_tracking SEC(".maps");
 
 struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct flow_key);
+    __type(value, data_point);
+    __uint(max_entries, MAX_FLOW_SAVED);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} flow_dropped SEC(".maps");
+
+
+struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
@@ -369,6 +378,7 @@ static __always_inline void compute_anomaly_for_target(const struct flow_key *ke
         target->is_normal = 0;   // Bất thường
         bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
                    target->lof_value, threshold);
+        bpf_map_update_elem(&flow_dropped, key, target, BPF_ANY);
     } else {
         target->is_normal = 1;   // Bình thường
     }

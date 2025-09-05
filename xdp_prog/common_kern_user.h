@@ -10,8 +10,7 @@
 #define SCALEEEEEE          1000
 #define DATA_CAL_LOF        100
 #define MAX_FLOW_SAVED      200
-// #define ZERO                0
-#define LOF_THRESHOLD       1.3   // hoặc giá trị bạn muốn
+#define LOF_THRESHOLD       1.3 // Threshold accuracy cao nhất
 typedef int32_t fixed;
 
 /* Flow identification key */

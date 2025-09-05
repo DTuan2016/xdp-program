@@ -39,6 +39,7 @@ static const struct option_wrapper long_options[] = {
 
 const char *pin_basedir = "/sys/fs/bpf";
 
+/*==================== PRINT ====================*/
 static void print_flow_key(struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
@@ -52,26 +53,42 @@ static void print_data_point(data_point *dp) {
            dp->total_bytes,
            dp->flow_IAT_mean,
            dp->k_distance,
-           dp->reach_dist[0], // in demo chỉ in 1 giá trị đầu
+           dp->reach_dist[0], // demo: in 1 reach_dist
            (float)dp->lrd_value / SCALEEEEEE,
            (float)dp->lof_value / SCALEEEEEE);
 }
 
+// static void print_knn(data_point *dp) {
+//     printf("   Neighbors: ");
+//     for (int k = 0; k < KNN; k++) {
+//         char ip[INET_ADDRSTRLEN];
+//         inet_ntop(AF_INET, &dp->knn[k].key.src_ip, ip, sizeof(ip));
+//         printf(" [%s:%u dist=%.3f]",
+//                ip, ntohs(dp->knn[k].key.src_port),
+//                (float)dp->knn[k].distance/SCALEEEEEE);
+//     }
+//     printf("\n");
+// }
+
 /*==================== SAFE LOG2 ====================*/
 static inline double safe_log2(double x) {
-    return (x > 0) ? log2(x) : 0.0;  // tránh log2(0) hoặc âm
+    return (x > 0) ? log2(x) : 0.0;
 }
 
-/*==================== DISTANCE <EUCLIDEAN> ====================*/
+/*==================== DISTANCE (Euclidean with log) ====================*/
 static double distance (data_point *a, data_point *b){
     double f1 = (double)a->total_bytes - (double)b->total_bytes;
     double d1 = (f1 > 0) ? safe_log2(f1) : safe_log2(-f1);
+
     double f2 = (double)a->total_pkts - (double)b->total_pkts;
     double d2 = (f2 > 0) ? safe_log2(f2) : safe_log2(-f2);
+
     double f3 = (double)a->flow_IAT_mean - (double)b->flow_IAT_mean;
     double d3 = (f3 > 0) ? safe_log2(f3) : safe_log2(-f3);
+
     double f4 = (double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts);
     double d4 = (f4 > 0) ? safe_log2(f4) : safe_log2(-f4);
+
     return sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4);
 }
 
@@ -85,28 +102,42 @@ static void compute_distance_matrix(data_point *data, int num_points, double dis
 }
 
 /*==================== FIND KNN ====================*/
-static void find_knn(data_point *data, int num_points, double dist[num_points][num_points], 
-                                                        int neighbors[num_points][KNN]){
-    for(int i = 0; i < num_points; i++){
+static void find_knn(data_point *data,
+                     struct flow_key *keys,
+                     int num_points,
+                     double dist[num_points][num_points],
+                     int neighbors[num_points][KNN]) 
+{
+    for (int i = 0; i < num_points; i++) {
         int idx[num_points];
-        for(int j = 0; j < num_points; j++) idx[j] = j;
-        
-        for(int j = 0; j < num_points; j ++){
-            for(int k = j + 1; k < num_points; k++){
-                if(dist[i][idx[k]] < dist[i][idx[j]]){
+        for (int j = 0; j < num_points; j++)
+            idx[j] = j;
+
+        // sắp xếp idx[] theo khoảng cách từ i
+        for (int j = 0; j < num_points - 1; j++) {
+            for (int k = j + 1; k < num_points; k++) {
+                if (dist[i][idx[k]] < dist[i][idx[j]]) {
                     int tmp = idx[j];
                     idx[j]  = idx[k];
                     idx[k]  = tmp;
                 }
             }
         }
-        for(int k = 0; k < KNN; k++){
-            neighbors[i][k] = idx[k+1];
-            if(k < (int)(sizeof(data[i].reach_dist) / sizeof(data[i].reach_dist[0]))){
-                data[i].reach_dist[k] = (unsigned short)dist[i][neighbors[i][k]];
+
+        // lưu KNN (bỏ idx[0] vì là chính nó)
+        for (int k = 0; k < KNN; k++) {
+            int nb_idx = idx[k + 1];
+
+            neighbors[i][k]         = nb_idx;
+            data[i].knn[k].key      = keys[nb_idx];
+            data[i].knn[k].distance = dist[i][nb_idx];
+
+            if (k < (int)(sizeof(data[i].reach_dist) / sizeof(data[i].reach_dist[0]))) {
+                data[i].reach_dist[k] = (unsigned short)dist[i][nb_idx];
             }
         }
-        data[i].k_distance = (unsigned short)dist[i][neighbors[i][KNN - 1]];
+
+        data[i].k_distance = (unsigned short)dist[i][idx[KNN]];
     }
 }
 
@@ -127,8 +158,7 @@ static void compute_lrd(data_point *data, int num_points, double dist[num_points
 }
 
 /*==================== COMPUTE LOF ====================*/
-static void compute_lof(data_point *data, int num_points, int neighbors[num_points][KNN], 
-                                                        double lrd[num_points]){
+static void compute_lof(data_point *data, int num_points, int neighbors[num_points][KNN], double lrd[num_points]){
     for(int i = 0; i < num_points; i++){
         double sum_ratio = 0.0; 
         for(int k = 0; k < KNN; k++){
@@ -142,19 +172,19 @@ static void compute_lof(data_point *data, int num_points, int neighbors[num_poin
     }
 }
 
-/*==================== RUN WITH ALL DATA ====================*/
-static void calculate_lof_for_data(data_point *data, int num_points){
+/*==================== RUN LOF ====================*/
+static void calculate_lof_for_data(data_point *data, struct flow_key *keys, int num_points){
     double dist[num_points][num_points];
     int neighbors[num_points][KNN];
     double lrd[num_points];
     
     compute_distance_matrix(data, num_points, dist);
-    find_knn(data, num_points, dist, neighbors);
+    find_knn(data, keys, num_points, dist, neighbors);
     compute_lrd(data, num_points, dist, neighbors, lrd);
     compute_lof(data, num_points, neighbors, lrd);
 }
 
-/*==================== MAIN PROCESS ====================*/
+/*==================== MAIN ====================*/
 int main(int argc, char **argv)
 {
     struct bpf_map_info info = {0};
@@ -169,7 +199,6 @@ int main(int argc, char **argv)
 
     const char *__doc__ = "Dump data_point from XDP BPF map\n";
 
-    /* Parse command line args */
     parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
 
     if (cfg.ifindex == -1) {
@@ -198,7 +227,6 @@ int main(int argc, char **argv)
 
         memset(&key, 0, sizeof(key));
 
-        // duyệt map và copy dữ liệu vào mảng flows[]
         while ((err = bpf_map_get_next_key(map_fd, &key, &next_key)) == 0) {
             if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
                 if (flow_count < MAX_FLOW_SAVED) {
@@ -211,8 +239,7 @@ int main(int argc, char **argv)
         }
 
         if (flow_count == DATA_CAL_LOF) {
-            // đủ dữ liệu => tính toán LOF
-            calculate_lof_for_data(flows, flow_count);
+            calculate_lof_for_data(flows, keys, flow_count);
 
             printf("\n=== Flow Table with LOF ===\n");
             printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s\n",
@@ -226,13 +253,13 @@ int main(int argc, char **argv)
                 printf(" | ");
                 print_data_point(&flows[i]);
                 printf("\n");
+                // print_knn(&flows[i]);
 
-                // optional: ghi lại LOF xuống map nếu muốn
                 bpf_map_update_elem(map_fd, &keys[i], &flows[i], BPF_ANY);
             }
         } else {
             printf("\n[INFO] Current flows: %d (waiting for %d to compute LOF)\n",
-                   flow_count, MAX_FLOW_SAVED);
+                   flow_count, DATA_CAL_LOF);
         }
 
         sleep(1);
