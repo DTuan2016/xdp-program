@@ -379,6 +379,7 @@ static __always_inline void compute_anomaly_for_target(const struct flow_key *ke
         bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
                    target->lof_value, threshold);
         bpf_map_update_elem(&flow_dropped, key, target, BPF_ANY);
+        bpf_map_delete_elem(&xdp_flow_tracking, key);
     } else {
         target->is_normal = 1;   // Bình thường
     }
