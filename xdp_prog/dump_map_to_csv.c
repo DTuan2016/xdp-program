@@ -33,9 +33,7 @@ static void print_data_point_csv(FILE *f, data_point *dp) {
            dp->last_seen - dp->start_ts,
            dp->total_pkts,
            dp->total_bytes,
-           dp->flow_IAT_mean,
-           (float)dp->lof_value / SCALEEEEEE,
-           dp->is_normal);
+           dp->flow_IAT_mean);
 }
 
 /* Dump toàn bộ map -> file CSV */

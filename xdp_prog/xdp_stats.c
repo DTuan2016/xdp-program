@@ -47,141 +47,127 @@ static void print_flow_key(struct flow_key *key) {
 }
 
 static void print_data_point(data_point *dp) {
-    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12f | %-12f\n",
+    printf("%-12llu | %-12u | %-12u | %-12u |\n",
            dp->last_seen - dp->start_ts,
            dp->total_pkts,
            dp->total_bytes,
-           dp->flow_IAT_mean,
-           dp->k_distance,
-           dp->reach_dist[0], // demo: in 1 reach_dist
-           (float)dp->lrd_value / SCALEEEEEE,
-           (float)dp->lof_value / SCALEEEEEE);
+           dp->flow_IAT_mean);
 }
 
-// static void print_knn(data_point *dp) {
-//     printf("   Neighbors: ");
-//     for (int k = 0; k < KNN; k++) {
-//         char ip[INET_ADDRSTRLEN];
-//         inet_ntop(AF_INET, &dp->knn[k].key.src_ip, ip, sizeof(ip));
-//         printf(" [%s:%u dist=%.3f]",
-//                ip, ntohs(dp->knn[k].key.src_port),
-//                (float)dp->knn[k].distance/SCALEEEEEE);
-//     }
-//     printf("\n");
-// }
-
-/*==================== SAFE LOG2 ====================*/
-static inline double safe_log2(double x) {
-    return (x > 0) ? log2(x) : 0.0;
+/* Random interger in range from min to max */
+static int rand_int(int min, int max){
+    return min + rand() % (max - min + 1);
 }
 
-/*==================== DISTANCE (Euclidean with log) ====================*/
-static double distance (data_point *a, data_point *b){
-    double f1 = (double)a->total_bytes - (double)b->total_bytes;
-    double d1 = (f1 > 0) ? safe_log2(f1) : safe_log2(-f1);
-
-    double f2 = (double)a->total_pkts - (double)b->total_pkts;
-    double d2 = (f2 > 0) ? safe_log2(f2) : safe_log2(-f2);
-
-    double f3 = (double)a->flow_IAT_mean - (double)b->flow_IAT_mean;
-    double d3 = (f3 > 0) ? safe_log2(f3) : safe_log2(-f3);
-
-    double f4 = (double)(a->last_seen - a->start_ts) - (double)(b->last_seen - b->start_ts);
-    double d4 = (f4 > 0) ? safe_log2(f4) : safe_log2(-f4);
-
-    return sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4);
+/* Create bootstrap sample */
+static data_point *bootstrap_sample(data_point *dataset, int num_points, int sample_size){
+    data_point *sample = (data_point*)malloc(sample_size * sizeof(data_point));
+    for(int i = 0; i < sample_size; i++){
+        int idx = rand() % num_points;
+        sample[i] = dataset[idx];
+    }
+    return sample;
 }
 
-/*==================== COMPUTE DISTANCE MATRIX ====================*/
-static void compute_distance_matrix(data_point *data, int num_points, double dist[num_points][num_points]){
+/* Build iTree recursively into nodes array */
+static int build_iTree(data_point *points, int num_points, int current_depth, int max_depth,
+                                                            iTreeNode *nodes, int node_idx){
+    if(num_points <= 1 || current_depth >= max_depth || node_idx >= MAX_NODE_PER_TREE){
+        nodes[node_idx].is_leaf     = 1;
+        nodes[node_idx].size        = num_points;
+        nodes[node_idx].left_idx    = nodes[node_idx].right_idx = NULL_IDX;
+        return node_idx;
+    }
+    int feature = rand() % MAX_FEATURES;
+    int min_val = points[0].features[feature];
+    int max_val = points[0].features[feature];
     for(int i = 0; i < num_points; i++){
-        for(int j = 0; j < num_points; j++){
-            dist[i][j] = (i == j) ? 0.0 : distance(&data[i], &data[j]);
-        }
+        if(min_val > points[i].features[feature]) min_val = points[i].features[feature];
+        if(max_val > points[i].features[feature]) max_val = points[i].features[feature];
     }
-}
-
-/*==================== FIND KNN ====================*/
-static void find_knn(data_point *data,
-                     struct flow_key *keys,
-                     int num_points,
-                     double dist[num_points][num_points],
-                     int neighbors[num_points][KNN]) 
-{
-    for (int i = 0; i < num_points; i++) {
-        int idx[num_points];
-        for (int j = 0; j < num_points; j++)
-            idx[j] = j;
-
-        // sắp xếp idx[] theo khoảng cách từ i
-        for (int j = 0; j < num_points - 1; j++) {
-            for (int k = j + 1; k < num_points; k++) {
-                if (dist[i][idx[k]] < dist[i][idx[j]]) {
-                    int tmp = idx[j];
-                    idx[j]  = idx[k];
-                    idx[k]  = tmp;
-                }
-            }
-        }
-
-        // lưu KNN (bỏ idx[0] vì là chính nó)
-        for (int k = 0; k < KNN; k++) {
-            int nb_idx = idx[k + 1];
-
-            neighbors[i][k]         = nb_idx;
-            data[i].knn[k].key      = keys[nb_idx];
-            data[i].knn[k].distance = dist[i][nb_idx];
-
-            if (k < (int)(sizeof(data[i].reach_dist) / sizeof(data[i].reach_dist[0]))) {
-                data[i].reach_dist[k] = (unsigned short)dist[i][nb_idx];
-            }
-        }
-
-        data[i].k_distance = (unsigned short)dist[i][idx[KNN]];
+    if (min_val == max_val){
+        nodes[node_idx].is_leaf     = 1;
+        nodes[node_idx].size        = num_points;
+        nodes[node_idx].left_idx    = nodes[node_idx].right_idx = NULL_IDX;
+        return node_idx;
     }
-}
-
-/*==================== COMPUTE LRD ====================*/
-static void compute_lrd(data_point *data, int num_points, double dist[num_points][num_points], 
-                        int neighbors[num_points][KNN], double lrd[num_points]){
-    for(int i = 0; i < num_points; i++){
-        double sum_reach = 0;
-        for(int k = 0; k < KNN; k++){
-            int o = neighbors[i][k];
-            double k_dist_o = dist[o][neighbors[o][KNN-1]];
-            double reach = (k_dist_o > dist[i][o]) ? k_dist_o : dist[i][o];
-            sum_reach += reach;
-        }
-        lrd[i] = (sum_reach > 0) ? (KNN / sum_reach) : 0.0;
-        data[i].lrd_value = (unsigned short)(lrd[i] * SCALEEEEEE);
-    }
-}
-
-/*==================== COMPUTE LOF ====================*/
-static void compute_lof(data_point *data, int num_points, int neighbors[num_points][KNN], double lrd[num_points]){
-    for(int i = 0; i < num_points; i++){
-        double sum_ratio = 0.0; 
-        for(int k = 0; k < KNN; k++){
-            int o = neighbors[i][k];
-            if(lrd[i] > 0){
-                sum_ratio += lrd[o] / lrd[i];
-            }
-        }
-        double lof = sum_ratio / KNN;
-        data[i].lof_value = (unsigned short)(lof * SCALEEEEEE);
-    }
-}
-
-/*==================== RUN LOF ====================*/
-static void calculate_lof_for_data(data_point *data, struct flow_key *keys, int num_points){
-    double dist[num_points][num_points];
-    int neighbors[num_points][KNN];
-    double lrd[num_points];
+    int split_value = rand_int(min_val, max_val);
+    nodes[node_idx].feature      = feature;
+    nodes[node_idx].split_value  = split_value;
+    nodes[node_idx].size         = num_points;
+    nodes[node_idx].is_leaf      = 0;
     
-    compute_distance_matrix(data, num_points, dist);
-    find_knn(data, keys, num_points, dist, neighbors);
-    compute_lrd(data, num_points, dist, neighbors, lrd);
-    compute_lof(data, num_points, neighbors, lrd);
+    int left_count, right_count = 0;
+    for(int i = 0; i < num_points; i++){
+        if(points[i].features[feature] < split_value) left_count++;
+        else right_count++;
+    }
+
+    if (left_count == 0 || right_count == 0) {
+        nodes[node_idx].is_leaf     = 1;
+        nodes[node_idx].size        = num_points;
+        nodes[node_idx].left_idx    = nodes[node_idx].right_idx = NULL_IDX;
+        return node_idx;
+    }
+
+    data_point *left_points  = malloc(left_count  * sizeof(data_point));
+    data_point *right_points = malloc(right_count * sizeof(data_point));
+    if (!left_points || !right_points) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    int li = 0, ri = 0;
+    for(int i  = 0; i < num_points; i++){
+        if(points[i].features[feature] < split_value) left_points[li++] = points[i];
+        else right_points[ri++] = points[i];
+    }
+
+    int left_idx  = node_idx * 2 + 1;
+    int right_idx = node_idx * 2 + 2;
+    nodes[node_idx].left_idx  = (left_idx  < MAX_NODE_PER_TREE) ? left_idx  : NULL_IDX;
+    nodes[node_idx].right_idx = (right_idx < MAX_NODE_PER_TREE) ? right_idx : NULL_IDX;
+
+    build_iTree(left_points,  left_count,  current_depth + 1, max_depth, nodes, left_idx);
+    build_iTree(right_points, right_count, current_depth + 1, max_depth, nodes, right_idx);
+    return node_idx;
+}
+
+IsolationForest *init_iForest(__u32 n_trees, __u32 sample_size, __u32 max_depth){
+    IsolationForest *forest = malloc(sizeof(IsolationForest));
+    forest->n_trees     = n_trees;
+    forest->max_depth   = max_depth;
+    forest->sample_size = sample_size;
+    for(int i = 0; i < n_trees; i++){
+        forest->trees[i].node_count = 0;
+    }
+    srand(time(NULL));
+    return forest;
+}
+
+void fit_iForest(IsolationForest *forest, data_point *dataset, int num_points){
+    for(int i = 0; i < forest->n_trees; i++){
+        data_point *sample = bootstrap_sample(dataset, num_points, forest->sample_size);
+        build_iTree(sample, forest->sample_size, 0, forest->max_depth, forest->trees[i].nodes, 0);
+        forest->trees[i].node_count = MAX_NODE_PER_TREE;
+        free(sample);
+    }
+}
+
+static int serialize_forest_to_array(IsolationForest *forest, iTreeNode *out_array, int max_out) {
+    if (!forest || !out_array) return 0;
+    int total_needed = forest->n_trees * MAX_NODE_PER_TREE;
+    if (max_out < total_needed) {
+        fprintf(stderr, "serialize_forest_to_array: out array too small (%d < %d)\n", max_out, total_needed);
+        return 0;
+    }
+    int idx = 0;
+    for (int t = 0; t < forest->n_trees; t++) {
+        /* Each tree uses MAX_NODE_PER_TREE slots (even if some unused). */
+        for (int n = 0; n < MAX_NODE_PER_TREE; n++) {
+            out_array[idx++] = forest->trees[t].nodes[n];
+        }
+    }
+    return idx; /* equals total_needed */
 }
 
 /*==================== MAIN ====================*/
@@ -238,9 +224,8 @@ int main(int argc, char **argv)
             key = next_key;
         }
 
-        if (flow_count == DATA_CAL_LOF) {
-            calculate_lof_for_data(flows, keys, flow_count);
-
+        if (flow_count == TRAINING_SET) {
+           
             printf("\n=== Flow Table with LOF ===\n");
             printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s\n",
                    "STT", "SrcIP:Port",
@@ -259,7 +244,7 @@ int main(int argc, char **argv)
             }
         } else {
             printf("\n[INFO] Current flows: %d (waiting for %d to compute LOF)\n",
-                   flow_count, DATA_CAL_LOF);
+                   flow_count, TRAINING_SET);
         }
 
         sleep(1);
