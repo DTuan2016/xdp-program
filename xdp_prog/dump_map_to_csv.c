@@ -85,7 +85,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    FILE *f = fopen("knn_7_204.csv", "w");
+    FILE *f = fopen("knn_6_151.csv", "w");
     if (!f) {
         perror("fopen");
         return EXIT_FAILURE;

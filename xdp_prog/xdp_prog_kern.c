@@ -345,7 +345,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
             __builtin_memcpy(&local_dp, dp, sizeof(data_point));
             bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
             // bpf_map_delete_elem(&xdp_flow_tracking, &key);
-            return XDP_DROP;
+            return XDP_PASS;
         } else {
             dp->is_normal = 1;
         }

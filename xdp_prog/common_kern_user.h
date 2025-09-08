@@ -5,8 +5,10 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#define KNN             5
+/* KNN, Threshold have max accuracy */
+#define KNN             4
 #define DIST_THRESHOLD  15
+/* Change benign set */
 #define MAX_FLOW_SAVED  200
 #define WARM_UP_FOR_KNN 100
 
