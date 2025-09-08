@@ -9,8 +9,10 @@
 #define KNN             4
 #define DIST_THRESHOLD  15
 /* Change benign set */
-#define MAX_FLOW_SAVED  200
-#define WARM_UP_FOR_KNN 100
+#define MAX_FLOW_SAVED  250
+#define WARM_UP_FOR_KNN 150 
+// 150  // 200  //
+// 1397 // 1840 //
 
 typedef int32_t fixed;
 
