@@ -33,12 +33,20 @@ struct {
 } flow_dropped SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
     __type(key, __u32);
     __type(value, iTreeNode);
-    __uint(max_entries, MAX_TREES);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
-} IsolationTree SEC(".maps");
+} xdp_isoforest_nodes SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct forest_params);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} xdp_isoforest_params SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -64,7 +72,6 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     if (eth->h_proto == bpf_htons(0x88cc)) {
         return -2;  // báo hiệu để drop
     }
-
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
         return -1;
@@ -95,6 +102,15 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
+/* ================= UPDATE FEATURE ================= */
+static __always_inline void update_feature_in_datapoint(data_point *dp)
+{
+    dp->features[0] = (__u32)(dp->flow_duration);
+    dp->features[1] = dp->total_pkts;
+    dp->features[2] = dp->total_bytes;
+    dp->features[3] = dp->flow_IAT_mean;
+}
+
 /* ================= UPDATE STATS ================= */
 static __always_inline data_point *update_stats(struct flow_key *key,
                                                 struct xdp_md *ctx,
@@ -112,11 +128,11 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         zero.total_pkts  = 1;
         zero.total_bytes = pkt_len;
 
-        if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
-            return NULL;
+        for(int i = 0; i < MAX_FEATURES; i++){
+            zero.features[i] = 0;
+        }
 
-        dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
-        if (!dp)
+        if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
 
         /* tăng counter flow */
@@ -125,7 +141,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         if (cnt)
             __sync_fetch_and_add(cnt, 1);
 
-        return dp;
+        return bpf_map_lookup_elem(&xdp_flow_tracking, key);
     }
 
     __u64 current_ns = ts;
@@ -143,8 +159,55 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     if (dp->total_pkts > 1)
         dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
 
-    dp->flow_duration = dp->last_seen - dp->last_seen;
+    dp->flow_duration = dp->last_seen - dp->start_ts;
+    update_feature_in_datapoint(dp);
     return dp;
+}
+
+static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx, struct forest_params *params) {
+    int node_idx = tree_idx * MAX_NODE_PER_TREE;
+    int depth = 0;
+
+#pragma unroll
+    for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
+        iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &node_idx);
+        if (!node || node->is_leaf) break;
+
+        __u32 f_val = 0;
+        switch (node->feature) {
+            case 0: f_val = dp->features[0]; break;
+            case 1: f_val = dp->features[1]; break;
+            case 2: f_val = dp->features[2]; break;
+            case 3: f_val = dp->features[3]; break;
+            default: break;
+        }
+
+        if (f_val < node->split_value) {
+            if (node->left_idx == NULL_IDX) break;
+            node_idx = node->left_idx;
+        } else {
+            if (node->right_idx == NULL_IDX) break;
+            node_idx = node->right_idx;
+        }
+        depth++;
+    }
+    return depth;
+}
+
+static __always_inline int is_anomaly(data_point *dp)
+{
+    __u32 key_params = 0;
+    struct forest_params *params = bpf_map_lookup_elem(&xdp_isoforest_params, &key_params);
+    if (!params) return 0;
+
+    int total_depth = 0;
+#pragma unroll
+    for (__u32 t = 0; t < MAX_TREES; t++) {
+        total_depth += compute_path_length(dp, t, params);
+    }
+
+    int avg_depth = (total_depth * SCALE) / params->n_trees;
+    return avg_depth < (params->threshold * SCALE);
 }
 
 /* ================= XDP MAIN ================= */
@@ -162,6 +225,33 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
 
     data_point *target = update_stats(&key, ctx, 1);
+    if(!target){
+        return XDP_PASS;
+    }
+
+    __u32 idx = 0;
+    __u32 *counter = bpf_map_lookup_elem(&flow_counter, &idx);
+    int local_counter = 0;
+    if (counter){
+        local_counter = *counter;
+    }
+    if(local_counter < TRAINING_SET){
+        target->label = 0;
+        return XDP_PASS;
+    }
+    else{/* Run isolation forest inference */
+        if (is_anomaly(target)) {
+            /* Nếu muốn, copy sang flow_dropped map */
+            target->label = 1;
+            bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
+            bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
+            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
+            return XDP_PASS;
+        }
+        target->label = 0;
+        bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
+        return XDP_PASS;
+    }
     return XDP_PASS;
 }
 
