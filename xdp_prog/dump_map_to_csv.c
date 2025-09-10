@@ -26,7 +26,7 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* In ra node dưới dạng CSV */
 static void print_node_csv(FILE *f, __u32 key, Node *node) {
-    fprintf(f, "%u,%d,%d,%u,%d,%u,%u\n",
+    fprintf(f, "%u,%d,%d,%u,%d\n",
             key,
             node->left_idx,
             node->right_idx,
@@ -95,9 +95,9 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    map_fd = open_bpf_map_file(pin_dir, "xdp_isoforest_nodes", &info);
+    map_fd = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
     if (map_fd < 0) {
-        fprintf(stderr, "ERR: cannot open map xdp_isoforest_nodes\n");
+        fprintf(stderr, "ERR: cannot open map xdp_randforest_nodes\n");
         return EXIT_FAILURE;
     }
 
@@ -107,7 +107,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    FILE *f1 = fopen("isoforest_nodes.csv", "w");
+    FILE *f1 = fopen("randforest_nodes.csv", "w");
     FILE *f2 = fopen("flow_tracking.csv", "w");
     if (!f1 || !f2) {
         perror("fopen");
@@ -120,7 +120,7 @@ int main(int argc, char **argv)
     dump_flow_map_to_csv(map_fd1, f2);
     fclose(f1);
     fclose(f2);
-    printf("Dumped isoforest nodes to isoforest_nodes.csv\n");
+    printf("Dumped randforest nodes to randforest_nodes.csv\n");
     printf("Dumped flow_tracking map to flow_tracking.csv\n");
     return EXIT_SUCCESS;
 }
