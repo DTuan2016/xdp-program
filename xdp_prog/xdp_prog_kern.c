@@ -98,7 +98,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     }
 
     // key->src_port = bpf_ntohs(src_port);
-    *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
+    // *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
 
@@ -106,29 +106,33 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 static __always_inline void update_feature_in_datapoint(data_point *dp)
 {
     dp->features[0] = (__u32)(dp->flow_duration);
-    dp->features[1] = dp->total_pkts;
-    dp->features[2] = dp->total_bytes;
+    dp->features[1] = dp->flow_pkts_per_s;
+    dp->features[2] = dp->pkt_len_mean;
     dp->features[3] = dp->flow_IAT_mean;
+    dp->features[4] = dp->flow_bytes_per_s;
 }
 
 /* ================= UPDATE STATS ================= */
 static __always_inline data_point *update_stats(struct flow_key *key,
                                                 struct xdp_md *ctx,
-                                                int is_fwd)
+                                                int is_fwd) 
 {
-    __u64 ts      = bpf_ktime_get_ns();
+    __u64 ts_ns  = bpf_ktime_get_ns();
+    __u64 ts_us  = ts_ns / 1000;  // convert ns -> µs
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
                             (__u8 *)((void *)(long)ctx->data));
 
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
         data_point zero = {};
-        zero.start_ts    = ts;
-        zero.last_seen   = ts;
+        zero.start_ts    = ts_us;
+        zero.last_seen   = ts_us;
         zero.total_pkts  = 1;
         zero.total_bytes = pkt_len;
+        zero.sum_IAT     = 0;
+        zero.sum_pkt_len = 0;
 
-        for(int i = 0; i < MAX_FEATURES; i++){
+        for (int i = 0; i < MAX_FEATURES; i++) {
             zero.features[i] = 0;
         }
 
@@ -144,34 +148,49 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         return bpf_map_lookup_elem(&xdp_flow_tracking, key);
     }
 
-    __u64 current_ns = ts;
-    __u64 iat_ns = (dp->last_seen > 0 && current_ns >= dp->last_seen) ?
-                   current_ns - dp->last_seen : 0;
+    __u64 current_us = ts_us;
+    __u64 iat_us = (dp->last_seen > 0 && current_us >= dp->last_seen) ?
+                   (current_us - dp->last_seen) : 0;
 
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
+    __sync_fetch_and_add(&dp->sum_pkt_len, pkt_len);
     
-    if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
+    if (iat_us > 0)
+        dp->sum_IAT += iat_us;
 
-    dp->last_seen = current_ns;
+    dp->last_seen = current_us;
 
-    if (dp->total_pkts > 1)
-        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+    if (dp->total_pkts > 1){
+        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);  // µs
+        dp->pkt_len_mean   = dp->sum_pkt_len / dp->total_pkts;
+    }
 
-    dp->flow_duration = dp->last_seen - dp->start_ts;
+    dp->flow_duration = dp->last_seen - dp->start_ts;  // µs
+    if (dp->flow_duration > 0) {
+        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
+        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+    }
     update_feature_in_datapoint(dp);
     return dp;
 }
 
-static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx, struct forest_params *params) {
-    int node_idx = tree_idx * MAX_NODE_PER_TREE;
+static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx) {
+    __u32 base = tree_idx * MAX_NODE_PER_TREE;
+    __u32 key = base;           // key để lookup map (tuyệt đối)
     int depth = 0;
 
-#pragma unroll
+    #pragma unroll
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
-        iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &node_idx);
-        if (!node || node->is_leaf) break;
+        iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &key);
+        if (!node) {
+            bpf_printk("Tree %u: node lookup failed at key=%u (depth=%d)", tree_idx, key, depth);
+            break;
+        }
+        if (node->is_leaf) {
+            bpf_printk("Tree %u: hit leaf at key=%u (depth=%d)", tree_idx, key, depth);
+            break;
+        }
 
         __u32 f_val = 0;
         switch (node->feature) {
@@ -179,35 +198,63 @@ static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx, s
             case 1: f_val = dp->features[1]; break;
             case 2: f_val = dp->features[2]; break;
             case 3: f_val = dp->features[3]; break;
-            default: break;
+            case 4: f_val = dp->features[4]; break;
+            default: f_val = 0; break;
         }
 
+        bpf_printk("Tree %u: depth=%d key=%u feat=%d f_val=%u split=%u",
+                   tree_idx, depth, key, node->feature, f_val, node->split_value);
+
         if (f_val < node->split_value) {
-            if (node->left_idx == NULL_IDX) break;
-            node_idx = node->left_idx;
+            if (node->left_idx == NULL_IDX) {
+                bpf_printk("Tree %u: NULL left_idx at depth=%d", tree_idx, depth);
+                break;
+            }
+            key = base + ((__u32)node->left_idx % MAX_NODE_PER_TREE);
         } else {
-            if (node->right_idx == NULL_IDX) break;
-            node_idx = node->right_idx;
+            if (node->right_idx == NULL_IDX) {
+                bpf_printk("Tree %u: NULL right_idx at depth=%d", tree_idx, depth);
+                break;
+            }
+            key = base + ((__u32)node->right_idx % MAX_NODE_PER_TREE);
         }
         depth++;
     }
+
+    bpf_printk("Tree %u: final depth=%d", tree_idx, depth);
     return depth;
 }
 
-static __always_inline int is_anomaly(data_point *dp)
-{
+static __always_inline int is_anomaly(data_point *dp) {
     __u32 key_params = 0;
     struct forest_params *params = bpf_map_lookup_elem(&xdp_isoforest_params, &key_params);
-    if (!params) return 0;
-
-    int total_depth = 0;
-#pragma unroll
-    for (__u32 t = 0; t < MAX_TREES; t++) {
-        total_depth += compute_path_length(dp, t, params);
+    if (!params) {
+        bpf_printk("is_anomaly: forest_params not found\n");
+        return 0;
     }
 
-    int avg_depth = (total_depth * SCALE) / params->n_trees;
-    return avg_depth < (params->threshold * SCALE);
+    __u32 n_trees = params->n_trees;
+    if (n_trees == 0) {
+        bpf_printk("is_anomaly: n_trees = 0\n");
+        return 0;
+    }
+
+    int total_depth = 0;
+    /* duyệt theo số cây thực tế (không cố định MAX_TREES) */
+    for (__u32 t = 0; t < n_trees && t < MAX_TREES; t++) {
+        int d = compute_path_length(dp, t);
+        bpf_printk("is_anomaly: Tree %u path length = %d", t, d);
+        total_depth += d;
+    }
+
+    int avg_depth = total_depth / n_trees;
+    bpf_printk("is_anomaly: total_depth=%d, avg_depth=%d, threshold=%u", 
+               total_depth, avg_depth, params->threshold);
+
+    int anomaly = (avg_depth < (int)params->threshold);
+    bpf_printk("is_anomaly: result=%d", anomaly);
+
+    return anomaly;
 }
 
 /* ================= XDP MAIN ================= */
@@ -229,29 +276,13 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    __u32 idx = 0;
-    __u32 *counter = bpf_map_lookup_elem(&flow_counter, &idx);
-    int local_counter = 0;
-    if (counter){
-        local_counter = *counter;
-    }
-    if(local_counter < TRAINING_SET){
+    if (is_anomaly(target)) {
         target->label = 0;
-        return XDP_PASS;
+        bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
+    } else {
+        target->label = 1;
     }
-    else{/* Run isolation forest inference */
-        if (is_anomaly(target)) {
-            /* Nếu muốn, copy sang flow_dropped map */
-            target->label = 1;
-            bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
-            bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
-            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
-            return XDP_PASS;
-        }
-        target->label = 0;
-        bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
-        return XDP_PASS;
-    }
+    bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
     return XDP_PASS;
 }
 

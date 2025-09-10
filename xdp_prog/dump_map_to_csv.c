@@ -37,15 +37,17 @@ static void print_node_csv(FILE *f, __u32 key, iTreeNode *node) {
 }
 
 static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
-    fprintf(f, "%u,%u,%llu,%llu,%llu,%u,%u,%llu,%u,%u\n",
-        key->src_ip,
-        key->src_port,
-        dp->start_ts,
-        dp->last_seen,
-        dp->flow_duration,
+    char ip_str[INET_ADDRSTRLEN];
+    struct in_addr addr;
+    addr.s_addr = key->src_ip; // network order
+    inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+
+    fprintf(f, "%s,%u,%llu,%u,%u,%u,%d\n",
+        ip_str,
+        ntohs((uint16_t)key->src_port),
+        (unsigned long long)dp->flow_duration,
         dp->total_pkts,
         dp->total_bytes,
-        dp->sum_IAT,
         dp->flow_IAT_mean,
         dp->label
     );
@@ -103,26 +105,26 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    map_fd1 = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
+    map_fd1 = open_bpf_map_file(pin_dir, "flow_dropped", &info);
     if (map_fd1 < 0) {
         fprintf(stderr, "ERR: cannot open map xdp_flow_tracking\n");
         return EXIT_FAILURE;
     }
 
     FILE *f1 = fopen("isoforest_nodes.csv", "w");
-    FILE *f2 = fopen("flow_tracking.csv", "w");
+    FILE *f2 = fopen("flow_dropped.csv", "w");
     if (!f1 || !f2) {
         perror("fopen");
         return EXIT_FAILURE;
     }
 
     fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,Size,IsLeaf\n");
-    fprintf(f2, "SrcIP,SrcPort,Padding,StartTS,LastSeen,FlowDuration,TotalPkts,TotalBytes,SumIAT,Label\n");
+    fprintf(f2, "SrcIP,SrcPort,FlowDuration,TotalPkts,TotalBytes,SumIAT,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);
     fclose(f1);
     fclose(f2);
     printf("Dumped isoforest nodes to isoforest_nodes.csv\n");
-    printf("Dumped flow_tracking map to flow_tracking.csv\n");
+    printf("Dumped flow_tracking map to flow_dropped.csv\n");
     return EXIT_SUCCESS;
 }

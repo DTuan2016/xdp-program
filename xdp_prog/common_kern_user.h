@@ -7,11 +7,11 @@
 #include <stdint.h>
 #include <math.h>
 #define SCALE               1000
-#define TRAINING_SET        100
-#define MAX_FLOW_SAVED      200
-#define MAX_FEATURES        4
-#define MAX_TREES           16
-#define MAX_NODE_PER_TREE   32
+#define TRAINING_SET        1000
+#define MAX_FLOW_SAVED      100
+#define MAX_FEATURES        5
+#define MAX_TREES           50
+#define MAX_NODE_PER_TREE   64
 #define NULL_IDX            UINT32_MAX
 // #define EXIT_FAIL_OPTION    1
 // #define EXIT_FAIL_BPF       2
@@ -26,13 +26,18 @@ struct flow_key {
 } __attribute__((packed));
 
 typedef struct {
-    __u64 start_ts;             /* Timestamp of first packet */
-    __u64 last_seen;            /* Timestamp of last packet */
-    __u64 flow_duration;        /* Duration of a flow */
-    __u32 total_pkts;           /* Total packet count (Paccket/s)*/
-    __u32 total_bytes;          /* Total byte count (Bytes/s)*/
-    __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
-    __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
+    __u64 start_ts;             /* Timestamp of first packet        */
+    __u64 last_seen;            /* Timestamp of last packet         */
+    __u32 total_pkts;           /* Total packet count (Paccket/s)   */
+    __u32 total_bytes;          /* Total byte count (Bytes/s)       */
+    __u64 sum_IAT;              /* Sum of Inter-Arrival Times       */
+    __u32 sum_pkt_len;
+
+    __u64 flow_duration;        /* Duration of a flow       */
+    __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time  */
+    __u32 flow_bytes_per_s;     /* Bytes/s                  */
+    __u32 flow_pkts_per_s;      /* Packets/s                */
+    __u32 pkt_len_mean;         /* Mean of Packet Length    */
     __u32 features[MAX_FEATURES];
     int   label;
 } data_point;
