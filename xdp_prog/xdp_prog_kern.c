@@ -36,9 +36,9 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
     __type(key, __u32);
-    __type(value, iTreeNode);
+    __type(value, Node);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_isoforest_nodes SEC(".maps");
+} xdp_randforest_nodes SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -46,7 +46,7 @@ struct {
     __type(key, __u32);
     __type(value, struct forest_params);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_isoforest_params SEC(".maps");
+} xdp_randforest_params SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -55,7 +55,6 @@ struct {
     __type(value, __u32);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_counter SEC(".maps");
-
 
 /* ================= PARSING ================= */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
@@ -70,7 +69,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         return -1;
 
     if (eth->h_proto == bpf_htons(0x88cc)) {
-        return -2;  // báo hiệu để drop
+        return -2;  // drop LLDP
     }
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
@@ -82,7 +81,6 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
     key->src_ip = iph->saddr;
 
-    // __u16 src_port = 0;
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
@@ -97,7 +95,6 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         key->src_port = 0;
     }
 
-    // key->src_port = bpf_ntohs(src_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
@@ -113,8 +110,7 @@ static __always_inline void update_feature_in_datapoint(data_point *dp)
 
 /* ================= UPDATE STATS ================= */
 static __always_inline data_point *update_stats(struct flow_key *key,
-                                                struct xdp_md *ctx,
-                                                int is_fwd)
+                                                struct xdp_md *ctx)
 {
     __u64 ts      = bpf_ktime_get_ns();
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
@@ -128,14 +124,12 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         zero.total_pkts  = 1;
         zero.total_bytes = pkt_len;
 
-        for(int i = 0; i < MAX_FEATURES; i++){
+        for(int i = 0; i < MAX_FEATURES; i++)
             zero.features[i] = 0;
-        }
 
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
 
-        /* tăng counter flow */
         __u32 idx = 0;
         __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
         if (cnt)
@@ -150,7 +144,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
 
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
-    
+
     if (iat_ns > 0)
         dp->sum_IAT += iat_ns;
 
@@ -164,50 +158,53 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     return dp;
 }
 
-static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx, struct forest_params *params) {
-    int node_idx = tree_idx * MAX_NODE_PER_TREE;
-    int depth = 0;
+/* ================= RANDOM FOREST INFERENCE ================= */
+static __always_inline int predict_tree(__u32 tree_idx, data_point *dp)
+{
+    __u32 node_idx = tree_idx * MAX_NODE_PER_TREE;
 
-#pragma unroll
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
-        iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &node_idx);
-        if (!node || node->is_leaf) break;
+        if (node_idx >= MAX_TREES * MAX_NODE_PER_TREE)
+            break;
 
-        __u32 f_val = 0;
-        switch (node->feature) {
-            case 0: f_val = dp->features[0]; break;
-            case 1: f_val = dp->features[1]; break;
-            case 2: f_val = dp->features[2]; break;
-            case 3: f_val = dp->features[3]; break;
-            default: break;
+        Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
+        if (!node || node->is_leaf) {
+            break;
         }
 
-        if (f_val < node->split_value) {
-            if (node->left_idx == NULL_IDX) break;
-            node_idx = node->left_idx;
+        if (node->split.feature < 0 || node->split.feature >= MAX_FEATURES)
+            return 0;
+        __u32 f_val = dp->features[node->split.feature];
+        if (f_val <= node->split.category) {
+            if (node->left_idx != NULL_IDX && node->left_idx < MAX_TREES * MAX_NODE_PER_TREE)
+                node_idx = node->left_idx;
+            else
+                break;
         } else {
-            if (node->right_idx == NULL_IDX) break;
-            node_idx = node->right_idx;
+            if (node->right_idx != NULL_IDX && node->right_idx < MAX_TREES * MAX_NODE_PER_TREE)
+                node_idx = node->right_idx;
+            else
+                break;
         }
-        depth++;
     }
-    return depth;
+    return 0;
 }
 
-static __always_inline int is_anomaly(data_point *dp)
+static __always_inline int predict_forest(data_point *dp)
 {
-    __u32 key_params = 0;
-    struct forest_params *params = bpf_map_lookup_elem(&xdp_isoforest_params, &key_params);
+    __u32 key = 0;
+    struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &key);
     if (!params) return 0;
 
-    int total_depth = 0;
-#pragma unroll
-    for (__u32 t = 0; t < MAX_TREES; t++) {
-        total_depth += compute_path_length(dp, t, params);
-    }
+    int votes0 = 0, votes1 = 0;
 
-    int avg_depth = (total_depth * SCALE) / params->n_trees;
-    return avg_depth < (params->threshold * SCALE);
+    for (__u32 t = 0; t < MAX_TREES; t++) {
+        if (t >= params->n_trees) break;
+        int pred = predict_tree(t, dp);
+        if (pred == 0) votes0++;
+        else votes1++;
+    }
+    return (votes1 > votes0) ? 1 : 0;
 }
 
 /* ================= XDP MAIN ================= */
@@ -218,41 +215,32 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __u64 pkt_len = 0;
 
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
-    if (ret == -2) {
+    if (ret == -2)
         return XDP_DROP;  // Drop LLDP
-    }
     if (ret < 0)
         return XDP_PASS;
 
-    data_point *target = update_stats(&key, ctx, 1);
-    if(!target){
+    data_point *target = update_stats(&key, ctx);
+    if (!target)
         return XDP_PASS;
-    }
 
     __u32 idx = 0;
     __u32 *counter = bpf_map_lookup_elem(&flow_counter, &idx);
-    int local_counter = 0;
-    if (counter){
-        local_counter = *counter;
-    }
-    if(local_counter < TRAINING_SET){
+    int local_counter = counter ? *counter : 0;
+
+    if (local_counter < TRAINING_SET) {
         target->label = 0;
         return XDP_PASS;
-    }
-    else{/* Run isolation forest inference */
-        if (is_anomaly(target)) {
-            /* Nếu muốn, copy sang flow_dropped map */
-            target->label = 1;
+    } else {
+        int pred = predict_forest(target);
+        target->label = pred ? 1 : 0;
+
+        if (pred) {
             bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
-            bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
-            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
-            return XDP_PASS;
         }
-        target->label = 0;
         bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
         return XDP_PASS;
     }
-    return XDP_PASS;
 }
 
 char _license[] SEC("license") = "GPL";

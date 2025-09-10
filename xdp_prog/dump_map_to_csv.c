@@ -25,13 +25,11 @@ const char *pin_basedir = "/sys/fs/bpf";
 #endif
 
 /* In ra node dưới dạng CSV */
-static void print_node_csv(FILE *f, __u32 key, iTreeNode *node) {
+static void print_node_csv(FILE *f, __u32 key, Node *node) {
     fprintf(f, "%u,%d,%d,%u,%d,%u,%u\n",
             key,
             node->left_idx,
             node->right_idx,
-            node->feature,
-            node->split_value,
             node->size,
             node->is_leaf);
 }
@@ -54,7 +52,7 @@ static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
 /* Dump toàn bộ map -> file CSV */
 static void dump_nodes_to_csv(int map_fd, FILE *f) {
     __u32 key = 0, next_key;
-    iTreeNode value;
+    Node value;
 
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
         if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {

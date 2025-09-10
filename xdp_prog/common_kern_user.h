@@ -6,17 +6,14 @@
 
 #include <stdint.h>
 #include <math.h>
-#define SCALE               1000
-#define TRAINING_SET        100
-#define MAX_FLOW_SAVED      200
-#define MAX_FEATURES        4
-#define MAX_TREES           16
-#define MAX_NODE_PER_TREE   32
-#define NULL_IDX            UINT32_MAX
-// #define EXIT_FAIL_OPTION    1
-// #define EXIT_FAIL_BPF       2
-// #define EXIT_FAIL_MEM       3
-// #define EXIT_OK             0
+#define SCALE                1000
+#define TRAINING_SET         100
+#define MAX_FLOW_SAVED       200
+#define MAX_FEATURES         4
+#define MAX_TREES            16
+#define MAX_NODE_PER_TREE    16
+#define MAX_SAMPLES_PER_NODE 10
+#define NULL_IDX             UINT32_MAX
 
 /* Flow identification key */
 struct flow_key {
@@ -37,31 +34,41 @@ typedef struct {
     int   label;
 } data_point;
 
-typedef struct iTreeNode{
-    int left_idx;
-    int right_idx;
-    int feature;
-    int split_value;             /* Have to SCALE */
-    int size;
-    int is_leaf;
-} iTreeNode;
+typedef struct BestSplitReturn{
+    __u32   resultanGini;
+    int     feature;
+    int     category;
+}BestSplit;
 
-typedef struct iTree{
-    iTreeNode nodes[MAX_NODE_PER_TREE];
-    __u32     node_count;
-}iTree;
+typedef struct Node{
+    int         left_idx;
+    int         right_idx;
+    int         size;
+    int         is_leaf;
+    data_point  points[MAX_SAMPLES_PER_NODE];
+    int         num_points;
+    BestSplit   split;
+} Node;
+
+typedef struct DecisionTree{
+    Node        nodes[MAX_NODE_PER_TREE];
+    int         max_depth;
+    int         min_samples_split;
+    int         node_count;
+}DecisionTree;
 
 typedef struct{
-    iTree trees[MAX_TREES];
-    __u32 n_trees;
-    __u32 sample_size;
-    __u32 max_depth;
-}IsolationForest;
+    DecisionTree trees[MAX_TREES];
+    __u32        n_trees;
+    __u32        sample_size;
+    __u32        max_depth;
+    __u32        min_samples_split;
+}RandomForest;
 
 struct forest_params {
     __u32 n_trees;
     __u32 sample_size;
-    __u32 threshold; /* integer threshold on avg path length */
+    __u32 min_samples_split;
 };
 
 /* XDP action definitions for compatibility */
