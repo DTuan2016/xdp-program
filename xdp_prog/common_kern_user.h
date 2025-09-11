@@ -42,6 +42,9 @@ typedef struct {
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
+    __u32 flow_pkts_per_s;
+    __u32 flow_bytes_per_s;
+    __u32 pkts_len_mean;
     struct knn_entries neighbors;
     __u32 is_normal;            /*1 = normally, 0 = anomaly*/
 } data_point;

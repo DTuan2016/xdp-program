@@ -136,27 +136,28 @@ static __always_inline __u16 bpf_sqrt(__u32 x)
 /* ==================== DISTANCE ==================== */
 static __always_inline __u16 euclidean_distance(const data_point *a, const data_point *b)
 {
-    __u64 fx, fy, fz, fw;
+    __u64 fx, fy, fz, fw, fh;
 
-    fx = (a->total_bytes > b->total_bytes) ? a->total_bytes - b->total_bytes
-                                           : b->total_bytes - a->total_bytes;
-    fy = (a->total_pkts > b->total_pkts) ? a->total_pkts - b->total_pkts
-                                         : b->total_pkts - a->total_pkts;
-    fz = (a->flow_IAT_mean > b->flow_IAT_mean) ? a->flow_IAT_mean - b->flow_IAT_mean
+    fx = (a->flow_bytes_per_s > b->flow_bytes_per_s) ? a->flow_bytes_per_s - b->flow_bytes_per_s
+                                           : b->flow_bytes_per_s - a->flow_bytes_per_s;
+    fy = (a->flow_pkts_per_s > b->flow_pkts_per_s) ? a->flow_pkts_per_s - b->flow_pkts_per_s
+                                         : b->flow_pkts_per_s - a->flow_pkts_per_s;
+    fz = (a->pkts_len_mean > b->pkts_len_mean) ? a->pkts_len_mean - b->pkts_len_mean
+                                               : b->pkts_len_mean - a->pkts_len_mean;
+
+    fw = (a->flow_duration > b->flow_duration) ? a->flow_duration - b->flow_duration
+                                   : b->flow_duration - a->flow_duration;
+    fh = (a->flow_IAT_mean > b->flow_IAT_mean) ? a->flow_IAT_mean - b->flow_IAT_mean
                                                : b->flow_IAT_mean - a->flow_IAT_mean;
-
-    __u64 flow_dur_a = a->last_seen - a->start_ts;
-    __u64 flow_dur_b = b->last_seen - b->start_ts;
-    fw = (flow_dur_a > flow_dur_b) ? flow_dur_a - flow_dur_b
-                                   : flow_dur_b - flow_dur_a;
 
     __u8 dx = (__u8)ilog2_u64(fx);
     __u8 dy = (__u8)ilog2_u64(fy);
     __u8 dz = (__u8)ilog2_u64(fz);
     __u8 dw = (__u8)ilog2_u64(fw);
-    bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu | dx=%u dy=%u dz=%u dw=%u\n",
-               fx, fy, fz, fw, dx, dy, dz, dw);
-    __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw;
+    __u8 dh = (__u8)ilog2_u64(fh);
+    bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu fh=%llu | dx=%u dy=%u dz=%u dw=%u dh=%u\n",
+               fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
+    __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw + dh*dh;
     __u16 res = bpf_sqrt(sum);
     bpf_printk("DIST sqrt=%u\n", res);
     return res;
@@ -264,13 +265,16 @@ static __always_inline data_point *update_stats(struct flow_key *key, struct xdp
     if (!dp) {
         /* FLOW MỚI */
         data_point zero = {};
-        zero.start_ts      = ts;
-        zero.last_seen     = ts;
-        zero.total_pkts    = 1;
-        zero.total_bytes   = pkt_len;
-        zero.sum_IAT       = 0;
-        zero.flow_IAT_mean = 0;
-        zero.is_normal     = 1;
+        zero.start_ts           = ts;
+        zero.last_seen          = ts;
+        zero.total_pkts         = 1;
+        zero.total_bytes        = pkt_len;
+        zero.sum_IAT            = 0;
+        zero.flow_IAT_mean      = 0;
+        zero.is_normal          = 1;
+        zero.flow_bytes_per_s   = 0;
+        zero.flow_pkts_per_s    = 0;
+        zero.pkts_len_mean      = 0;
 
         /* init neighbors (distance=0xffff) để tránh rác */
 #pragma unroll
@@ -302,13 +306,22 @@ static __always_inline data_point *update_stats(struct flow_key *key, struct xdp
     dp->total_bytes += pkt_len;
     if (iat_ns > 0)
         dp->sum_IAT += iat_ns;
+        
     dp->last_seen = current_ns;
 
     if (dp->total_pkts > 1)
+    {
         dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+        dp->pkts_len_mean = dp->total_bytes / dp->total_pkts;
+    }
     else
         dp->flow_IAT_mean = 0;
 
+    dp->flow_duration = dp->last_seen - dp->start_ts;
+    if(dp->flow_duration > 0){
+        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
+        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+    }
     return dp;
 }
 
