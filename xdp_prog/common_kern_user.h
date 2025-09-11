@@ -8,11 +8,13 @@
 #include <math.h>
 #define SCALE                1000
 #define TRAINING_SET         1000
-#define MAX_FLOW_SAVED       100
+#define MAX_FLOW_SAVED       300
 #define MAX_FEATURES         5
 #define MAX_TREES            32
 #define MAX_NODE_PER_TREE    64
 #define MAX_SAMPLES_PER_NODE 100
+#define MAX_FOREST_TREES     16     
+#define MAX_TREE_DEPTH       32     
 #define NULL_IDX             UINT32_MAX
 
 /* Flow identification key */
@@ -39,40 +41,32 @@ typedef struct {
     int   label;
 } data_point;
 
-typedef struct BestSplitReturn{
-    __u32   resultanGini;
-    int     feature;
-    int     category;
-}BestSplit;
-
 typedef struct Node{
-    int         left_idx;
-    int         right_idx;
-    int         size;
-    int         is_leaf;
-    data_point  points[MAX_SAMPLES_PER_NODE];
-    int         num_points;
-    BestSplit   split;
+    int left_idx;
+    int right_idx;
+    int split_value;
+    int feature_idx;
+    int is_leaf;
 } Node;
 
 typedef struct DecisionTree{
     Node        nodes[MAX_NODE_PER_TREE];
+    int         node_count;
     int         max_depth;
     int         min_samples_split;
-    int         node_count;
 }DecisionTree;
 
 typedef struct{
     DecisionTree trees[MAX_TREES];
     __u32        n_trees;
-    __u32        sample_size;
     __u32        max_depth;
-    __u32        min_samples_split;
+    __u32        sample_size;
 }RandomForest;
 
 struct forest_params {
     __u32 n_trees;
     __u32 sample_size;
+    __u32 max_depth;
     __u32 min_samples_split;
 };
 

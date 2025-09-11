@@ -2,16 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <errno.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <bpf/bpf.h>
-#include <linux/if_link.h>
-#include <unistd.h>
-#include <limits.h>
-#include <bpf/libbpf.h>
+#include <arpa/inet.h>
 
-#include "common_kern_user.h" 
+#include "common_kern_user.h"
 
 /* chỉ khai báo prototype cần dùng */
 int open_bpf_map_file(const char *pin_dir,
@@ -19,44 +15,44 @@ int open_bpf_map_file(const char *pin_dir,
                       struct bpf_map_info *info);
 
 const char *pin_basedir = "/sys/fs/bpf";
-
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
-/* In ra node dưới dạng CSV */
-static void print_node_csv(FILE *f, __u32 key, Node *node) {
-    fprintf(f, "%u,%d,%d,%u,%d\n",
+/* ================= CSV PRINT ================= */
+static void print_node_csv(FILE *f, __u32 key, const Node *node) {
+    fprintf(f, "%u,%d,%d,%d,%d,%d,%d\n",
             key,
             node->left_idx,
             node->right_idx,
-            node->size,
-            node->is_leaf);
+            node->feature_idx,
+            node->split_value,
+            node->is_leaf,
+            0); // Reserved / Size field if cần
 }
 
-static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
-    fprintf(f, "%u,%u,%llu,%llu,%llu,%u,%u,%llu,%u,%u\n",
-        key->src_ip,
-        key->src_port,
-        dp->start_ts,
-        dp->last_seen,
-        dp->flow_duration,
-        dp->total_pkts,
-        dp->total_bytes,
-        dp->sum_IAT,
-        dp->flow_IAT_mean,
-        dp->label
-    );
+static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
+    fprintf(f, "%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
+            key->src_ip,
+            ntohs(key->src_port),
+            key->padding,
+            dp->features[0],
+            dp->features[1],
+            dp->features[2],
+            dp->features[3],
+            dp->features[4],
+            dp->label);
 }
 
-/* Dump toàn bộ map -> file CSV */
+/* ================= DUMP MAPS ================= */
 static void dump_nodes_to_csv(int map_fd, FILE *f) {
     __u32 key = 0, next_key;
-    Node value;
+    Node node;
 
+    /* Iterate map */
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
-        if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-            print_node_csv(f, next_key, &value);
+        if (bpf_map_lookup_elem(map_fd, &next_key, &node) == 0) {
+            print_node_csv(f, next_key, &node);
         }
         key = next_key;
     }
@@ -77,50 +73,48 @@ static void dump_flow_map_to_csv(int map_fd, FILE *f) {
     fflush(f);
 }
 
-int main(int argc, char **argv)
-{
-    struct bpf_map_info info = {0};
-    char pin_dir[PATH_MAX];
-    int map_fd, map_fd1;
-    int len;
-
+/* ================= MAIN ================= */
+int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s <ifname>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, argv[1]);
-    if (len < 0) {
-        fprintf(stderr, "ERR: creating pin dirname\n");
-        return EXIT_FAILURE;
-    }
+    struct bpf_map_info info = {0};
+    char pin_dir[PATH_MAX];
+    snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, argv[1]);
 
-    map_fd = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
-    if (map_fd < 0) {
+    int map_fd_nodes = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
+    if (map_fd_nodes < 0) {
         fprintf(stderr, "ERR: cannot open map xdp_randforest_nodes\n");
         return EXIT_FAILURE;
     }
 
-    map_fd1 = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
-    if (map_fd1 < 0) {
+    int map_fd_flows = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
+    if (map_fd_flows < 0) {
         fprintf(stderr, "ERR: cannot open map xdp_flow_tracking\n");
         return EXIT_FAILURE;
     }
 
-    FILE *f1 = fopen("randforest_nodes.csv", "w");
-    FILE *f2 = fopen("flow_tracking.csv", "w");
-    if (!f1 || !f2) {
+    FILE *f_nodes = fopen("randforest_nodes.csv", "w");
+    FILE *f_flows = fopen("flow_tracking.csv", "w");
+    if (!f_nodes || !f_flows) {
         perror("fopen");
         return EXIT_FAILURE;
     }
 
-    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,Size,IsLeaf\n");
-    fprintf(f2, "SrcIP,SrcPort,Padding,StartTS,LastSeen,FlowDuration,TotalPkts,TotalBytes,SumIAT,Label\n");
-    dump_nodes_to_csv(map_fd, f1);
-    dump_flow_map_to_csv(map_fd1, f2);
-    fclose(f1);
-    fclose(f2);
-    printf("Dumped randforest nodes to randforest_nodes.csv\n");
-    printf("Dumped flow_tracking map to flow_tracking.csv\n");
+    /* Header CSV */
+    fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Reserved\n");
+    fprintf(f_flows, "SrcIP,SrcPort,Padding,StartTS,LastSeen,FlowDuration,TotalPkts,TotalBytes,SumIAT,Label\n");
+
+    dump_nodes_to_csv(map_fd_nodes, f_nodes);
+    dump_flow_map_to_csv(map_fd_flows, f_flows);
+
+    fclose(f_nodes);
+    fclose(f_flows);
+
+    printf("Dumped xdp_randforest_nodes -> randforest_nodes.csv\n");
+    printf("Dumped xdp_flow_tracking -> flow_tracking.csv\n");
+
     return EXIT_SUCCESS;
 }
