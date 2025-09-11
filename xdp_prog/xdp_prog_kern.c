@@ -319,8 +319,8 @@ static __always_inline data_point *update_stats(struct flow_key *key, struct xdp
 
     dp->flow_duration = dp->last_seen - dp->start_ts;
     if(dp->flow_duration > 0){
-        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
-        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+        dp->flow_bytes_per_s = (dp->total_bytes * 1000000000) / dp->flow_duration;
+        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000000) / dp->flow_duration;
     }
     return dp;
 }
