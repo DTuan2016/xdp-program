@@ -10,7 +10,7 @@
 #define TRAINING_SET        1000
 #define MAX_FLOW_SAVED      100
 #define MAX_FEATURES        5
-#define MAX_TREES           50
+#define MAX_TREES           75
 #define MAX_NODE_PER_TREE   64
 #define NULL_IDX            UINT32_MAX
 // #define EXIT_FAIL_OPTION    1
