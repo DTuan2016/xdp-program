@@ -35,6 +35,10 @@ typedef struct {
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
+    __u64 flow_duration;
+    __u32 flow_pkts_per_s;
+    __u32 flow_bytes_per_s;
+    __u32 pkts_len_mean;
     int   is_normal;
 
     __u16 k_distance;            /* k-distance value */
