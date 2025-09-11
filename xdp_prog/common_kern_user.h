@@ -7,12 +7,12 @@
 #include <stdint.h>
 #include <math.h>
 #define SCALE                1000
-#define TRAINING_SET         100
-#define MAX_FLOW_SAVED       200
-#define MAX_FEATURES         4
-#define MAX_TREES            16
-#define MAX_NODE_PER_TREE    16
-#define MAX_SAMPLES_PER_NODE 10
+#define TRAINING_SET         1000
+#define MAX_FLOW_SAVED       100
+#define MAX_FEATURES         5
+#define MAX_TREES            32
+#define MAX_NODE_PER_TREE    64
+#define MAX_SAMPLES_PER_NODE 100
 #define NULL_IDX             UINT32_MAX
 
 /* Flow identification key */
@@ -25,11 +25,16 @@ struct flow_key {
 typedef struct {
     __u64 start_ts;             /* Timestamp of first packet */
     __u64 last_seen;            /* Timestamp of last packet */
-    __u64 flow_duration;        /* Duration of a flow */
     __u32 total_pkts;           /* Total packet count (Paccket/s)*/
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
+    /* Feature use for algorithm */
+    __u64 flow_duration;        /* Duration of a flow */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
+    __u32 flow_pkts_per_s;
+    __u32 flow_bytes_per_s;
+    __u32 pkt_len_mean;
+
     __u32 features[MAX_FEATURES];
     int   label;
 } data_point;

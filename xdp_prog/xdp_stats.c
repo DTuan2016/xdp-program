@@ -32,6 +32,57 @@ static const struct option_wrapper long_options[] = {
 #endif
 
 const char *pin_basedir = "/sys/fs/bpf";
+/*==================== CSV Reading ====================*/
+int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
+    FILE *f = fopen(filename, "r");
+    if (!f) return -1;
+
+    char line[1024];
+    int count = 0;
+
+    /* Skip header */
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), f) && count < max_rows) {
+        data_point dp = {};
+        int index, src_port;
+        char src_ip[64];
+        double flow_duration, fwd_packets, bwd_packets, len_fwd_pkts;
+        double len_bwd_pkts, flow_IAT_mean;
+        int label;
+        int n = sscanf(line,
+                       "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
+                       &index, src_ip, &src_port,
+                       &flow_duration, &fwd_packets, &bwd_packets,
+                       &len_fwd_pkts, &len_bwd_pkts, &flow_IAT_mean,
+                       &label);
+
+        if (n != 10) continue;
+
+        dp.flow_duration   = (__u64)flow_duration;
+        dp.flow_bytes_per_s= (__u32)(len_bwd_pkts + len_fwd_pkts) * 1000000 / flow_duration;
+        dp.flow_pkts_per_s = (__u32)(fwd_packets + bwd_packets) * 1000000 / flow_duration;
+        dp.flow_IAT_mean   = (__u32)flow_IAT_mean;
+        dp.pkt_len_mean    = (__u32)((len_bwd_pkts + len_fwd_pkts) / (fwd_packets + bwd_packets));
+
+        /* Copy to dp.features[] (order must match kernel) */
+        dp.features[0] = (uint32_t)dp.flow_duration;
+        dp.features[1] = dp.flow_bytes_per_s;
+        dp.features[2] = dp.flow_pkts_per_s;
+        dp.features[3] = dp.flow_IAT_mean;
+        dp.features[4] = dp.pkt_len_mean;
+        dp.label = label;
+        dataset[count++] = dp;
+
+        printf("Data: %u,%u,%u,%u,%u,%d \n", dp.features[0], dp.features[1], dp.features[2], 
+            dp.features[3], dp.features[4], dp.label);
+    }
+    fclose(f);
+    return count;
+}
 
 /*==================== TREE HELPERS ====================*/
 static void count_classes(Node *node, int *count0, int *count1) {
@@ -105,6 +156,9 @@ BestSplit find_best_split(Node *node) {
                 best.resultanGini = scaled;
                 best.category     = threshold;
                 best.feature      = f;
+                
+                printf("[DEBUG] Node best split updated: feature=%d threshold=%d weighted_gini=%u\n",
+                f, threshold, scaled);
             }
         }
     }
@@ -173,32 +227,77 @@ void init_tree_struct(DecisionTree *tree, int max_depth, int min_samples_split) 
     tree->node_count        = 0;
 }
 
+/*==================== FOREST ====================*/
+static data_point *bootstrap_sample(data_point *points, int num_points, int sample_size) {
+    if (num_points <= 0 || sample_size <= 0) return NULL;
+
+    data_point *sample = calloc(sample_size, sizeof(data_point));
+    if (!sample) return NULL;
+
+    // Đếm số điểm theo label
+    int count0 = 0, count1 = 0;
+    for (int i = 0; i < num_points; i++) {
+        if (points[i].label == 0) count0++;
+        else if (points[i].label == 1) count1++;
+    }
+    if (count0 == 0 || count1 == 0) {
+        // fallback random nếu không có đủ 2 label
+        for (int i = 0; i < sample_size; i++) {
+            int idx = rand() % num_points;
+            sample[i] = points[idx];
+        }
+        return sample;
+    }
+
+    // stratified sampling theo tỉ lệ dataset
+    int sample0 = (sample_size * count0) / (count0 + count1);
+    int sample1 = sample_size - sample0;
+
+    // lấy label 0
+    for (int i = 0; i < sample0; i++) {
+        int idx;
+        do { idx = rand() % num_points; } while (points[idx].label != 0);
+        sample[i] = points[idx];
+    }
+    // lấy label 1
+    for (int i = 0; i < sample1; i++) {
+        int idx;
+        do { idx = rand() % num_points; } while (points[idx].label != 1);
+        sample[sample0 + i] = points[idx];
+    }
+
+    return sample;
+}
+
 void fit_tree(DecisionTree *tree, data_point *points, int num_points) {
-    if (!tree) return;
-    for (int i = 0; i < MAX_NODE_PER_TREE; i++) node_init_empty(&tree->nodes[i]);
+    if (!tree || !points || num_points <= 0) return;
+
+    // reset toàn bộ nodes
+    for (int i = 0; i < MAX_NODE_PER_TREE; i++)
+        node_init_empty(&tree->nodes[i]);
 
     tree->node_count = 1;
     Node *root = &tree->nodes[0];
     node_init_empty(root);
 
     int tocopy = (num_points > MAX_SAMPLES_PER_NODE) ? MAX_SAMPLES_PER_NODE : num_points;
-    for (int i = 0; i < tocopy; i++) {
-        root->points[root->num_points++] = points[i];
-    }
+
+    data_point *sample = bootstrap_sample(points, num_points, tocopy);
+    if (!sample) return;
+
+    // copy vào root
+    for (int i = 0; i < tocopy; i++)
+        root->points[root->num_points++] = sample[i];
+
+    // in debug label count
+    int c0=0, c1=0;
+    count_classes(root, &c0, &c1);
+    printf("[DEBUG] Tree root num_points=%d label0=%d label1=%d Gini=%u\n",
+           root->num_points, c0, c1, getGiniImpurity(root));
+
+    free(sample);
+
     build_tree(tree, 0, 0);
-}
-
-/*==================== FOREST ====================*/
-static data_point *bootstrap_sample(data_point *points, int num_points, int sample_size) {
-    if (num_points <= 0 || sample_size <= 0) return NULL;
-    data_point *sample = calloc(sample_size, sizeof(data_point));
-    if (!sample) return NULL;
-
-    for (int i = 0; i < sample_size; i++) {
-        int idx = rand() % num_points;
-        sample[i] = points[idx];
-    }
-    return sample;
 }
 
 RandomForest *init_forest(__u32 n_trees, __u32 sample_size, __u32 max_depth, __u32 min_samples_split) {
@@ -312,93 +411,76 @@ int main(int argc, char **argv) {
         return EXIT_FAIL_BPF;
     }
 
-    while (1) {
-        struct flow_key key = {}, next_key;
-        data_point flows[TRAINING_SET];
-        int flow_count = 0;
-
-        while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0 && flow_count < TRAINING_SET) {
-            data_point value;
-            if (bpf_map_lookup_elem(map_fd, &next_key, &value) == 0) {
-                flows[flow_count++] = value;
-            }
-            key = next_key;
-        }
-
-        if (flow_count < TRAINING_SET) {
-            printf("[INFO] Current flows: %d (waiting for %d to train RandomForest)\n",
-                   flow_count, TRAINING_SET);
-            sleep(1);
-            continue;
-        }
-
-        printf("\n=== Training RandomForest with %d flows ===\n", flow_count);
-
-        data_point dataset[TRAINING_SET];
-        memcpy(dataset, flows, sizeof(dataset));
-
-        const __u32 n_trees     = MAX_TREES;
-        const __u32 sample_size = (TRAINING_SET < 32) ? TRAINING_SET : 32;
-        const __u32 max_depth   = 10;
-        const __u32 min_samples_split = 2;
-
-        RandomForest *forest = init_forest(n_trees, sample_size, max_depth, min_samples_split);
-        if (!forest) {
-            fprintf(stderr, "[ERROR] init_forest failed\n");
-            sleep(1);
-            continue;
-        }
-
-        fit_forest(forest, dataset, TRAINING_SET);
-
-        Node *all_nodes = calloc(MAX_TREES * MAX_NODE_PER_TREE, sizeof(Node));
-        if (!all_nodes) {
-            perror("calloc all_nodes");
-            free_forest(forest);
-            sleep(1);
-            continue;
-        }
-
-        for (unsigned int t = 0; t < forest->n_trees && t < MAX_TREES; ++t) {
-            int cnt = forest->trees[t].node_count;
-            int base = t * MAX_NODE_PER_TREE;
-            for (int n = 0; n < MAX_NODE_PER_TREE; ++n) {
-                if (n < cnt) {
-                    all_nodes[base + n] = forest->trees[t].nodes[n];
-                } else {
-                    all_nodes[base + n].is_leaf   = 1;
-                    all_nodes[base + n].left_idx  = -1;
-                    all_nodes[base + n].right_idx = -1;
-                    all_nodes[base + n].size      = 0;
-                }
-            }
-        }
-
-        for (__u32 i = 0; i < MAX_TREES * MAX_NODE_PER_TREE; i++) {
-            if (bpf_map_update_elem(map_fd_nodes, &i, &all_nodes[i], BPF_ANY) != 0) {
-                fprintf(stderr, "[ERROR] update node %u failed: %s\n", i, strerror(errno));
-            }
-        }
-
-        struct forest_params params = {
-            .n_trees           = n_trees,
-            .sample_size       = sample_size,
-            .min_samples_split = min_samples_split,
-        };
-        __u32 param_key = 0;
-        if (bpf_map_update_elem(map_fd_params, &param_key, &params, BPF_ANY) != 0) {
-            fprintf(stderr, "[ERROR] update forest_params failed: %s\n", strerror(errno));
-        } else {
-            printf("[INFO] Updated forest_params (n_trees=%u, sample_size=%u, min_samples_split=%u)\n",
-                   n_trees, sample_size, min_samples_split);
-        }
-
-        printf("[INFO] Successfully updated nodes into xdp_randforest_nodes\n");
-
-        free(all_nodes);
-        free_forest(forest);
-        break; /* only train once */
+    data_point train_dataset[TRAINING_SET];
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/training_data.csv",
+                                    train_dataset, TRAINING_SET);
+    if(train_count < 1){
+        fprintf(stderr, "[ERROR] Training CSV empty or invalid\n");
+        // close(map_fd_flow); close(map_fd_nodes); close(map_fd_params); close(map_fd_c);
+        return EXIT_FAIL_OPTION;
     }
+    printf("[INFO] Read %d training flows\n", train_count);
+
+    const __u32 n_trees     = MAX_TREES;
+    const __u32 sample_size = (train_count < MAX_SAMPLES_PER_NODE) ? train_count : MAX_SAMPLES_PER_NODE;
+    const __u32 max_depth   = 6;
+    const __u32 min_samples_split = 2;
+
+    RandomForest *forest = init_forest(n_trees, sample_size, max_depth, min_samples_split);
+    if (!forest) {
+        fprintf(stderr, "[ERROR] init_forest failed\n");
+        return EXIT_FAILURE;
+    }
+
+    fit_forest(forest, train_dataset, TRAINING_SET);
+
+    Node *all_nodes = calloc(MAX_TREES * MAX_NODE_PER_TREE, sizeof(Node));
+    if (!all_nodes) {
+        perror("calloc all_nodes");
+        free_forest(forest);
+        return EXIT_FAILURE;
+    }
+
+    for(unsigned int t = 0; t < forest->n_trees && t < MAX_TREES; t++){
+        int cnt = forest->trees[t].node_count;
+        int base = t * MAX_NODE_PER_TREE;
+        for(int n = 0; n < MAX_NODE_PER_TREE; n++){
+            if(n < cnt){
+                all_nodes[base + n] = forest->trees[t].nodes[n];
+                printf("[DEBUG] Tree %u Node %d num_points=%d is_leaf=%d\n", t, n,
+                       all_nodes[base + n].num_points, all_nodes[base + n].is_leaf);
+            } else {
+                all_nodes[base + n].is_leaf     = 1;
+                all_nodes[base + n].left_idx    = -1;
+                all_nodes[base + n].right_idx   = -1;
+                all_nodes[base + n].num_points  = 0;
+            }
+        }
+    }
+
+    for (__u32 i = 0; i < MAX_TREES * MAX_NODE_PER_TREE; i++) {
+        if (bpf_map_update_elem(map_fd_nodes, &i, &all_nodes[i], BPF_ANY) != 0) {
+            fprintf(stderr, "[ERROR] update node %u failed: %s\n", i, strerror(errno));
+        }
+    }
+
+    struct forest_params params = {
+        .n_trees           = n_trees,
+        .sample_size       = sample_size,
+        .min_samples_split = min_samples_split,
+    };
+    __u32 param_key = 0;
+    if (bpf_map_update_elem(map_fd_params, &param_key, &params, BPF_ANY) != 0) {
+        fprintf(stderr, "[ERROR] update forest_params failed: %s\n", strerror(errno));
+    } else {
+        printf("[INFO] Updated forest_params (n_trees=%u, sample_size=%u, min_samples_split=%u)\n",
+               n_trees, sample_size, min_samples_split);
+    }
+
+    printf("[INFO] Successfully updated nodes into xdp_randforest_nodes\n");
+
+    free(all_nodes);
+    free_forest(forest);
 
     return EXIT_OK;
 }

@@ -103,9 +103,10 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 static __always_inline void update_feature_in_datapoint(data_point *dp)
 {
     dp->features[0] = (__u32)(dp->flow_duration);
-    dp->features[1] = dp->total_pkts;
-    dp->features[2] = dp->total_bytes;
+    dp->features[1] = dp->flow_pkts_per_s;
+    dp->features[2] = dp->pkt_len_mean;
     dp->features[3] = dp->flow_IAT_mean;
+    dp->features[4] = dp->flow_bytes_per_s;
 }
 
 /* ================= UPDATE STATS ================= */
@@ -113,14 +114,15 @@ static __always_inline data_point *update_stats(struct flow_key *key,
                                                 struct xdp_md *ctx)
 {
     __u64 ts      = bpf_ktime_get_ns();
+    __u64 ts_us   = ts / 1000;
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
                             (__u8 *)((void *)(long)ctx->data));
 
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
         data_point zero = {};
-        zero.start_ts    = ts;
-        zero.last_seen   = ts;
+        zero.start_ts    = ts_us;
+        zero.last_seen   = ts_us;
         zero.total_pkts  = 1;
         zero.total_bytes = pkt_len;
 
@@ -138,7 +140,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         return bpf_map_lookup_elem(&xdp_flow_tracking, key);
     }
 
-    __u64 current_ns = ts;
+    __u64 current_ns = ts_us;
     __u64 iat_ns = (dp->last_seen > 0 && current_ns >= dp->last_seen) ?
                    current_ns - dp->last_seen : 0;
 
@@ -150,10 +152,15 @@ static __always_inline data_point *update_stats(struct flow_key *key,
 
     dp->last_seen = current_ns;
 
-    if (dp->total_pkts > 1)
+    if (dp->total_pkts > 1){
         dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
-
+        dp->pkt_len_mean   = dp->total_bytes / dp->total_pkts;
+    }
     dp->flow_duration = dp->last_seen - dp->start_ts;
+    if (dp->flow_duration > 0) {
+        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
+        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+    }
     update_feature_in_datapoint(dp);
     return dp;
 }
@@ -169,12 +176,17 @@ static __always_inline int predict_tree(__u32 tree_idx, data_point *dp)
 
         Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
         if (!node || node->is_leaf) {
+            bpf_printk("tree %d reached leaf at node_idx=%d\n", tree_idx, node_idx);
             break;
         }
 
-        if (node->split.feature < 0 || node->split.feature >= MAX_FEATURES)
+        if (node->split.feature < 0 || node->split.feature >= MAX_FEATURES){
+            bpf_printk("tree %d invalid feature %d\n", tree_idx, node->split.feature);
             return 0;
+        }
         __u32 f_val = dp->features[node->split.feature];
+        bpf_printk("tree %d node_idx=%d feature=%d f_val=%u threshold=%d\n",
+                   tree_idx, node_idx, node->split.feature, f_val, node->split.category);
         if (f_val <= node->split.category) {
             if (node->left_idx != NULL_IDX && node->left_idx < MAX_TREES * MAX_NODE_PER_TREE)
                 node_idx = node->left_idx;
@@ -224,23 +236,18 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (!target)
         return XDP_PASS;
 
-    __u32 idx = 0;
-    __u32 *counter = bpf_map_lookup_elem(&flow_counter, &idx);
-    int local_counter = counter ? *counter : 0;
+    int pred = predict_forest(target);
+    target->label = pred ? 1 : 0;
 
-    if (local_counter < TRAINING_SET) {
-        target->label = 0;
-        return XDP_PASS;
-    } else {
-        int pred = predict_forest(target);
-        target->label = pred ? 1 : 0;
+    bpf_printk("flow src_ip=%x src_port=%d pred=%d total_pkts=%u total_bytes=%u\n",
+            key.src_ip, bpf_ntohs(key.src_port), pred, target->total_pkts, target->total_bytes);
 
-        if (pred) {
-            bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
-        }
-        bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
-        return XDP_PASS;
+    if (pred) {
+        bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
+        bpf_printk("Flow dropped: src_ip=%x src_port=%d\n", key.src_ip, bpf_ntohs(key.src_port));
     }
+    bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
+    return XDP_PASS;
 }
 
 char _license[] SEC("license") = "GPL";
