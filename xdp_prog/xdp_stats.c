@@ -61,23 +61,23 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
         data_point dp = {};
         int index, src_port;
         char src_ip[64];
-        double flow_duration, flow_bytes_per_s, flow_pkts_per_s, flow_IAT_mean;
-        double fwd_len_mean, bwd_len_mean;
+        double flow_duration, fwd_pkts, bwd_pkts, flow_IAT_mean;
+        double fwd_len, bwd_len;
         int label;
         int n = sscanf(line,
                        "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
                        &index, src_ip, &src_port,
-                       &flow_duration, &flow_bytes_per_s, &flow_pkts_per_s,
-                       &flow_IAT_mean, &fwd_len_mean, &bwd_len_mean,
+                       &flow_duration, &fwd_pkts, &bwd_pkts,
+                       &bwd_len, &fwd_len, &flow_IAT_mean,
                        &label);
 
         if (n != 10) continue;
 
         dp.flow_duration   = (__u64)flow_duration;
-        dp.flow_bytes_per_s= (__u32)flow_bytes_per_s;
-        dp.flow_pkts_per_s = (__u32)flow_pkts_per_s;
+        dp.flow_bytes_per_s= (__u32)((fwd_len + bwd_len) * 1000000) / flow_duration;
+        dp.flow_pkts_per_s = (__u32)((fwd_pkts + bwd_pkts) * 1000000) / flow_duration;
         dp.flow_IAT_mean   = (__u32)flow_IAT_mean;
-        dp.pkt_len_mean    = (__u32)((fwd_len_mean + bwd_len_mean) / 2.0);
+        dp.pkt_len_mean    = (__u32)((fwd_len + bwd_len) / (fwd_pkts + bwd_pkts));
 
         /* Copy to dp.features[] (order must match kernel) */
         dp.features[0] = (uint32_t)dp.flow_duration;
