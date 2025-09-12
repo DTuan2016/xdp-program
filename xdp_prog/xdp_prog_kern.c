@@ -77,9 +77,8 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     if ((void *)(eth + 1) > data_end)
         return -1;
 
-    if (eth->h_proto == bpf_htons(0x88cc)) {
-        return -2;  // báo hiệu để drop
-    }
+    if (eth->h_proto == bpf_htons(0x88cc))
+        return -2; // drop LLDP
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
         return -1;
@@ -104,6 +103,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         key->src_port = 0;
     }
 
+    *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
 
@@ -181,107 +181,72 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     return dp;
 }
 
-/* ================= PATH LENGTH (with c(node->size)) ================= */
-static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx) {
+/* ================= SAFE FEATURE ACCESS ================= */
+static __always_inline __u32 get_feature_safe(data_point *dp, __u32 feat_idx)
+{
+    if (feat_idx < MAX_FEATURES)
+        return dp->features[feat_idx];
+    return 0;
+}
+
+/* ================= PATH LENGTH ================= */
+static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx)
+{
     __u32 base = tree_idx * MAX_NODE_PER_TREE;
-    __u32 key  = base;           
+    __u32 key  = base;
     int depth  = 0;
 
-    #pragma unroll
+#pragma unroll
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
         iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &key);
-        if (!node) {
-            bpf_printk("Tree %u: node lookup failed key=%u (depth=%d)", tree_idx, key, depth);
+        if (!node)
             break;
-        }
+
         if (node->is_leaf) {
-            __u32 size  = (node->size <= TRAINING_SET) ? ( __u32 ) node->size : TRAINING_SET;
+            __u32 size = (node->num_points <= TRAINING_SET) ? node->num_points : TRAINING_SET;
             __u32 c_key = size;
             __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
             if (c_scaled) {
-                __u32 scaled = *c_scaled;
-                int c_int = (int)((scaled + (SCALE/2)) / SCALE);
-                bpf_printk("Tree %u: leaf key=%u depth=%d size=%u c_scaled=%u c_int=%d",
-                           tree_idx, key, depth, size, scaled, c_int);
+                int c_int = (int)((*c_scaled + (SCALE/2)) / SCALE);
                 return depth + c_int;
-            } else {
-                __u32 key_params = 0;
-                struct forest_params *params = bpf_map_lookup_elem(&xdp_isoforest_params, &key_params);
-                if (params) {
-                    int c_int = (int)params->threshold;
-                    bpf_printk("Tree %u: leaf fallback to params threshold c_int=%d", tree_idx, c_int);
-                    return depth + c_int;
-                }
-                bpf_printk("Tree %u: leaf and no c(n) found, returning depth=%d", tree_idx, depth);
-                return depth;
             }
+            return depth;
         }
 
-        __u32 f_val = 0;
-        switch (node->feature) {
-            case 0: f_val = dp->features[0]; break;
-            case 1: f_val = dp->features[1]; break;
-            case 2: f_val = dp->features[2]; break;
-            case 3: f_val = dp->features[3]; break;
-            case 4: f_val = dp->features[4]; break;
-            default: f_val = 0; break;
-        }
+        __u32 f_val = get_feature_safe(dp, node->feature_idx);
 
-        bpf_printk("Tree %u: depth=%d key=%u feat=%d f_val=%u split=%d left=%d right=%d",
-                   tree_idx, depth, key, node->feature, f_val, node->split_value, node->left_idx, node->right_idx);
-
-        if (f_val < ( __u32 ) node->split_value) {
-            if (node->left_idx == NULL_IDX) {
-                bpf_printk("Tree %u: NULL left_idx at depth=%d", tree_idx, depth);
-                break;
-            }
-            key = base + ( (__u32) node->left_idx );
+        if (f_val <= node->split_value) {
+            if (node->left_idx == NULL_IDX) break;
+            key = base + node->left_idx;
         } else {
-            if (node->right_idx == NULL_IDX) {
-                bpf_printk("Tree %u: NULL right_idx at depth=%d", tree_idx, depth);
-                break;
-            }
-            key = base + ( (__u32) node->right_idx );
+            if (node->right_idx == NULL_IDX) break;
+            key = base + node->right_idx;
         }
         depth++;
     }
-
-    bpf_printk("Tree %u: final depth=%d (no leaf hit)", tree_idx, depth);
     return depth;
 }
 
-static __always_inline int is_anomaly(data_point *dp) {
+/* ================= ANOMALY CHECK ================= */
+static __always_inline int is_anomaly(data_point *dp)
+{
     __u32 key_params = 0;
     struct forest_params *params = bpf_map_lookup_elem(&xdp_isoforest_params, &key_params);
-    if (!params) {
-        bpf_printk("is_anomaly: forest_params not found\n");
-        return 0;
-    }
+    if (!params) return 0;
 
     __u32 n_trees = params->n_trees;
-    if (n_trees == 0) {
-        bpf_printk("is_anomaly: n_trees = 0\n");
-        return 0;
-    }
+    if (n_trees == 0) return 0;
 
     int total_depth = 0;
-    for (__u32 t = 0; t < n_trees && t < MAX_TREES; t++) {
-        int d = compute_path_length(dp, t);
-        bpf_printk("is_anomaly: Tree %u path length = %d", t, d);
-        total_depth += d;
-    }
+    for (__u32 t = 0; t < n_trees && t < MAX_TREES; t++)
+        total_depth += compute_path_length(dp, t);
 
-    __u32 avg_depth = ((__u32) total_depth * SCALE) / n_trees;
-    bpf_printk("is_anomaly: total_depth=%d, avg_depth=%d, threshold=%u",
-               total_depth, avg_depth, params->threshold);
+    __u32 avg_depth = ((__u32)total_depth * SCALE) / n_trees;
 
-    if (avg_depth < params->threshold)
-        return 1; /* anomaly (score > s0) */
-    else
-        return 0; /* normal */
+    return (avg_depth < params->threshold) ? 1 : 0;
 }
 
-/* ================= XDP MAIN ================= */
+/* ================= XDP PROGRAM ================= */
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
@@ -289,24 +254,19 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __u64 pkt_len = 0;
 
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
-    if (ret == -2) {
-        return XDP_DROP;  // Drop LLDP
-    }
-    if (ret < 0)
-        return XDP_PASS;
+    if (ret == -2) return XDP_DROP;
+    if (ret < 0) return XDP_PASS;
 
-    data_point *target = update_stats(&key, ctx, 1);
-    if(!target){
-        return XDP_PASS;
-    }
+    data_point *dp = update_stats(&key, ctx, 1);
+    if (!dp) return XDP_PASS;
 
-    if (is_anomaly(target)) {
-        target->label = 0;
-        bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
+    if (is_anomaly(dp)) {
+        dp->label = 0;
+        bpf_map_update_elem(&flow_dropped, &key, dp, BPF_ANY);
     } else {
-        target->label = 1;
+        dp->label = 1;
     }
-    bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
+    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
     return XDP_PASS;
 }
 

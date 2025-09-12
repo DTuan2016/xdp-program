@@ -26,13 +26,12 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* In ra node dưới dạng CSV */
 static void print_node_csv(FILE *f, __u32 key, iTreeNode *node) {
-    fprintf(f, "%u,%d,%d,%u,%d,%u,%u\n",
+    fprintf(f, "%u,%d,%d,%u,%d,%u\n",
             key,
             node->left_idx,
             node->right_idx,
-            node->feature,
+            node->feature_idx,
             node->split_value,
-            node->size,
             node->is_leaf);
 }
 

@@ -46,7 +46,10 @@ const char *pin_basedir = "/sys/fs/bpf";
 /*==================== CSV Reading ====================*/
 int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
     FILE *f = fopen(filename, "r");
-    if (!f) return -1;
+    if (!f) {
+        fprintf(stderr, "[ERROR] Cannot open file: %s\n", filename);
+        return -1;
+    }
 
     char line[1024];
     int count = 0;
@@ -58,454 +61,427 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
     }
 
     while (fgets(line, sizeof(line), f) && count < max_rows) {
-        data_point dp = {};
+        data_point dp = {0};
         int index, src_port;
         char src_ip[64];
-        double flow_duration, fwd_pkts, bwd_pkts, flow_IAT_mean;
-        double fwd_len, bwd_len;
+        double flow_duration, fwd_packets, bwd_packets, len_fwd_pkts;
+        double len_bwd_pkts, flow_IAT_mean;
         int label;
+        
         int n = sscanf(line,
                        "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
                        &index, src_ip, &src_port,
-                       &flow_duration, &fwd_pkts, &bwd_pkts,
-                       &bwd_len, &fwd_len, &flow_IAT_mean,
+                       &flow_duration, &fwd_packets, &bwd_packets,
+                       &len_fwd_pkts, &len_bwd_pkts, &flow_IAT_mean,
                        &label);
 
         if (n != 10) continue;
 
-        dp.flow_duration   = (__u64)flow_duration;
-        dp.flow_bytes_per_s= (__u32)((fwd_len + bwd_len) * 1000000) / flow_duration;
-        dp.flow_pkts_per_s = (__u32)((fwd_pkts + bwd_pkts) * 1000000) / flow_duration;
-        dp.flow_IAT_mean   = (__u32)flow_IAT_mean;
-        dp.pkt_len_mean    = (__u32)((fwd_len + bwd_len) / (fwd_pkts + bwd_pkts));
+        // Validate input data
+        if (flow_duration <= 0 || (fwd_packets + bwd_packets) <= 0) {
+            continue;
+        }
 
-        /* Copy to dp.features[] (order must match kernel) */
-        dp.features[0] = (uint32_t)dp.flow_duration;
-        dp.features[1] = dp.flow_bytes_per_s;
-        dp.features[2] = dp.flow_pkts_per_s;
+        // Calculate features correctly
+        double total_packets = fwd_packets + bwd_packets;
+        double total_length = len_fwd_pkts + len_bwd_pkts;
+        
+        dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds
+        dp.total_pkts       = (__u32)total_packets;
+        dp.total_bytes      = (__u64)total_length;
+        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); 
+        dp.pkt_len_mean     = (__u32)(total_length / total_packets);
+        
+        // Calculate per-second rates
+        dp.flow_pkts_per_s  = (__u32)((total_packets * 1000000.0) / flow_duration);
+        dp.flow_bytes_per_s = (__u32)((total_length * 1000000.0) / flow_duration);
+
+        /* Copy to dp.features[] - order must match kernel */
+        dp.features[0] = (__u32)dp.flow_duration;
+        dp.features[1] = dp.flow_pkts_per_s;
+        dp.features[2] = dp.pkt_len_mean;
         dp.features[3] = dp.flow_IAT_mean;
-        dp.features[4] = dp.pkt_len_mean;
+        dp.features[4] = dp.flow_bytes_per_s;
+        
         dp.label = label;
         dataset[count++] = dp;
-    }
 
+        if (count <= 5) { // Print first few for debugging
+            printf("Sample %d: duration=%u, pkts/s=%u, mean_len=%u, IAT=%u, bytes/s=%u, label=%d\n",
+                   count, dp.features[0], dp.features[1], dp.features[2], 
+                   dp.features[3], dp.features[4], dp.label);
+        }
+    }
     fclose(f);
     return count;
 }
 
-/*==================== Random helpers ====================*/
-static int rand_int_range(int min, int max) {
-    if (max <= min) return min;
-    double r = (double)rand() / (RAND_MAX + 1.0);
-    long range = (long)max - (long)min + 1L;
-    return (int)(min + (int)(r * range));
+double c_factor(int n) {
+    if (n <= 1) return 0.0;
+    return 2.0 * (log((double)n - 1.0) + 0.5772156649) - 2.0*(n-1.0)/n;
 }
 
-static data_point *bootstrap_sample(data_point *dataset, int num_points, int sample_size) {
-    data_point *sample = calloc(sample_size, sizeof(data_point));
-    if (!sample) return NULL;
-    for (int i = 0; i < sample_size; i++) {
-        int idx = rand() % num_points;
+void init_forest(IsolationForest *forest, __u32 n_trees, __u32 max_depth){
+    if (!forest) return;
+    forest->n_trees = n_trees;
+    forest->max_depth = max_depth;
+    forest->sample_size = 0;
+    for(__u32 t = 0; t < n_trees && t < MAX_TREES; t++){
+        forest->trees[t].num_nodes = 0;
+        for(__u32 n = 0; n < MAX_NODE_PER_TREE; n++){
+            iTreeNode *node = &forest->trees[t].nodes[n];
+            node->is_leaf       = 1;
+            node->left_idx      = NULL_IDX;
+            node->right_idx     = NULL_IDX;
+            node->feature_idx   = -1;
+            node->split_value   = 0;
+            node->num_points    = 0;
+        }
+    }
+}
+
+int build_tree(iTree *tree, data_point *points, __u32 num_points, int depth, int node_idx) {
+    if (!tree || !points) return -1;
+    if (node_idx < 0 || node_idx >= MAX_NODE_PER_TREE) return -1;
+
+    iTreeNode *node = &tree->nodes[node_idx];
+    /* initialize node */
+    node->left_idx = NULL_IDX;
+    node->right_idx = NULL_IDX;
+    node->feature_idx = -1;
+    node->split_value = 0;
+    node->is_leaf = 1;
+    node->num_points = (int)num_points;
+    tree->num_nodes = (tree->num_nodes > (unsigned)(node_idx+1)) ? tree->num_nodes : (node_idx+1);
+
+    /* stop conditions */
+    if (num_points <= 1 || depth >= (int)tree->max_depth) {
+        node->is_leaf = 1;
+        node->num_points = num_points;
+        return node_idx;
+    }
+
+    /* choose random feature */
+    int feat = rand() % MAX_FEATURES;
+    __u32 minv = points[0].features[feat];
+    __u32 maxv = minv;
+    for (__u32 i = 1; i < num_points; i++) {
+        if (points[i].features[feat] < minv) minv = points[i].features[feat];
+        if (points[i].features[feat] > maxv) maxv = points[i].features[feat];
+    }
+
+    if (minv == maxv) {
+        node->is_leaf = 1;
+        node->num_points = num_points;
+        return node_idx;
+    }
+
+    __u32 split = minv + (rand() % (maxv - minv + 1));
+    node->is_leaf = 0;
+    node->feature_idx = feat;
+    node->split_value = split;
+
+    /* partition points */
+    /* Use dynamic arrays on stack sized by sample (safe because sample_size <= MAX_FLOW_SAVED) */
+    data_point left[MAX_FLOW_SAVED];
+    data_point right[MAX_FLOW_SAVED];
+    __u32 li = 0, ri = 0;
+    for (__u32 i = 0; i < num_points; i++) {
+        if (points[i].features[feat] <= split) {
+            if (li < MAX_FLOW_SAVED) left[li++] = points[i];
+        } else {
+            if (ri < MAX_FLOW_SAVED) right[ri++] = points[i];
+        }
+    }
+
+    /* left subtree at node_idx + 1 */
+    int left_idx = node_idx + 1;
+    if (left_idx >= MAX_NODE_PER_TREE) {
+        /* cannot allocate subtree -> make leaf */
+        node->is_leaf = 1;
+        node->num_points = num_points;
+        node->left_idx = NULL_IDX;
+        node->right_idx = NULL_IDX;
+        return node_idx;
+    }
+
+    int last_left = build_tree(tree, left, li, depth + 1, left_idx);
+    if (last_left < 0) {
+        /* failed to build left -> make leaf */
+        node->is_leaf = 1;
+        node->num_points = num_points;
+        node->left_idx = NULL_IDX;
+        node->right_idx = NULL_IDX;
+        return node_idx;
+    }
+    node->left_idx = left_idx;
+
+    /* right subtree starts after last_left */
+    int right_start = last_left + 1;
+    if (right_start >= MAX_NODE_PER_TREE) {
+        /* cannot allocate right -> set right NULL */
+        node->right_idx = NULL_IDX;
+        tree->num_nodes = (tree->num_nodes > (unsigned)(last_left+1)) ? tree->num_nodes : (last_left+1);
+        return last_left; /* last used index is last_left */
+    }
+
+    int last_right = build_tree(tree, right, ri, depth + 1, right_start);
+    if (last_right < 0) {
+        /* no right subtree */
+        node->right_idx = NULL_IDX;
+        return last_left;
+    }
+    node->right_idx = right_start;
+
+    /* update tree->num_nodes */
+    tree->num_nodes = (tree->num_nodes > (unsigned)(last_right+1)) ? tree->num_nodes : (last_right+1);
+    node->num_points = num_points;
+
+    return last_right;
+}
+
+void train_isolation_tree(iTree *tree, data_point *dataset, __u32 num_points, __u32 max_depth) {
+    if (!tree) return;
+    tree->num_nodes = 0;
+    tree->max_depth = max_depth;
+    for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
+        tree->nodes[i].is_leaf = 1;
+        tree->nodes[i].left_idx = NULL_IDX;
+        tree->nodes[i].right_idx = NULL_IDX;
+        tree->nodes[i].feature_idx = -1;
+        tree->nodes[i].split_value = 0;
+        tree->nodes[i].num_points = 0;
+    }
+
+    /* build tree at index 0 */
+    int last = build_tree(tree, dataset, num_points, 0, 0);
+    if (last < 0) {
+        fprintf(stderr, "[WARN] build_tree returned error\n");
+        tree->num_nodes = 0;
+    }
+}
+
+void bootstrap_sample(data_point *dataset, __u32 num_points, __u32 sample_size, data_point *sample) {
+    if (!dataset || !sample || num_points == 0) return;
+    if (sample_size > MAX_FLOW_SAVED) sample_size = MAX_FLOW_SAVED; /* safety */
+    for (__u32 i = 0; i < sample_size; i++) {
+        __u32 idx = rand() % num_points;
         sample[i] = dataset[idx];
     }
-    return sample;
 }
 
-/* Harmonic number H(n) */
-static double harmonic_number(int n){
-    double h = 0.0;
-    for (int i = 1; i <= n; i++) h += 1.0 / (double)i;
-    return h;
-}
+void train_isolation_forest(IsolationForest *forest, data_point *dataset, int num_points, struct forest_params *params) {
+    if (!forest || !dataset || !params) return;
 
-/* Expected path length c(n) */
-static double expected_path_length(int n){
-    if (n <= 1) return 0.0;
-    return 2.0 * harmonic_number(n - 1) - 2.0 * (double)(n - 1) / n;
-}
+    forest->n_trees = params->n_trees;
+    forest->max_depth = params->max_depth;
+    forest->sample_size = params->sample_size;
+    printf("[INFO] Training %u trees with max_depth=%u, sample_size=%u\n",
+           params->n_trees, params->max_depth, params->sample_size);
 
-/*==================== iTree / IsolationForest ====================*/
-static int build_iTree(data_point *points, int num_points, int current_depth, int max_depth,
-                        iTreeNode *nodes, int *next_free)
-{
-    if (num_points <= 0 || *next_free >= MAX_NODE_PER_TREE)
-        return 0;
+    __u32 sample_size = params->sample_size;
+    if (sample_size > MAX_FLOW_SAVED) sample_size = MAX_FLOW_SAVED;
+    if (sample_size == 0) sample_size = (num_points > 0) ? ( (__u32) num_points ) : 1;
+    if (sample_size > (unsigned)num_points) sample_size = (unsigned)num_points;
 
-    int cur = (*next_free)++;
-    nodes[cur].is_leaf = 0;
-    nodes[cur].size = num_points;
-    nodes[cur].left_idx = NULL_IDX;
-    nodes[cur].right_idx = NULL_IDX;
-    nodes[cur].feature = 0;
-    nodes[cur].split_value = 0;
-
-    if (num_points <= 1 || current_depth >= max_depth) {
-        nodes[cur].is_leaf = 1;
-        return 1;
-    }
-
-    int f = rand() % MAX_FEATURES;
-
-    int min_val = points[0].features[f];
-    int max_val = points[0].features[f];
-    for (int i = 1; i < num_points; i++) {
-        if (points[i].features[f] < min_val) min_val = points[i].features[f];
-        if (points[i].features[f] > max_val) max_val = points[i].features[f];
-    }
-
-    if (max_val - min_val <= 1) {
-        nodes[cur].is_leaf = 1;
-        nodes[cur].feature = f;
-        nodes[cur].split_value = min_val;
-        return 1;
-    }
-
-    int split = rand_int_range(min_val + 1, max_val - 1);
-
-    /* Count left/right */
-    int left_count = 0, right_count = 0;
-    for (int i = 0; i < num_points; i++){
-        if(points[i].features[f] < split) left_count++;
-        else right_count++;
-    }
-
-    if (left_count == 0 || right_count == 0) {
-        nodes[cur].is_leaf = 1;
-        nodes[cur].feature = f;
-        nodes[cur].split_value = split;
-        return 1;
-    }
-
-    data_point *left  = malloc(left_count *  sizeof(data_point));
-    data_point *right = malloc(right_count * sizeof(data_point));
-    if (!left || !right) {
-        free(left); free(right);
-        nodes[cur].is_leaf = 1;
-        return 1;
-    }
-
-    int li = 0, ri = 0;
-    for (int i = 0; i < num_points; i++) {
-        if(points[i].features[f] < split) left[li++] = points[i];
-        else right[ri++] = points[i];
-    }
-
-    nodes[cur].feature      = f;
-    nodes[cur].split_value  = split;
-
-    int used = 1;
-    if (left_count > 0) {
-        int left_start = *next_free;
-        int used_left = build_iTree(left, left_count, current_depth + 1, max_depth, nodes, next_free);
-        nodes[cur].left_idx = left_start;
-        used += used_left;
-    }
-    if (right_count > 0) {
-        int right_start = *next_free;
-        int used_right = build_iTree(right, right_count, current_depth + 1, max_depth, nodes, next_free);
-        nodes[cur].right_idx = right_start;
-        used += used_right;
-    }
-
-    free(left);
-    free(right);
-    return used;
-}
-
-IsolationForest *init_iForest(__u32 n_trees, __u32 sample_size, __u32 max_depth){
-    IsolationForest *forest = calloc(1, sizeof(IsolationForest));
-    if(!forest) return NULL;
-    forest->n_trees = n_trees;
-    forest->sample_size = sample_size;
-    forest->max_depth = max_depth;
-    return forest;
-}
-
-void free_iForest(IsolationForest *forest){
-    if(forest) free(forest);
-}
-
-void fit_iForest(IsolationForest *forest, data_point *dataset, int num_points){
-    if(!forest){
-        return;
-    }
-    for(int t = 0; t < (int)forest->n_trees && t < MAX_TREES; t++){
-        int actual_sample = (int)forest->sample_size;
-        if (actual_sample > num_points){
-            actual_sample = num_points;
-        }
-        data_point *sample = bootstrap_sample(dataset, num_points, actual_sample);
-        if (!sample){
-            continue;
-        }
-        memset(forest->trees[t].nodes, 0, sizeof(forest->trees[t].nodes));
-        int next_free = 0;
-        build_iTree(sample, actual_sample, 0, forest->max_depth,
-                    forest->trees[t].nodes, &next_free);
-        forest->trees[t].node_count = next_free;
-        free(sample);
+    for (__u32 t = 0; t < params->n_trees && t < MAX_TREES; t++) {
+        printf("Training tree %u/%u...\n", t + 1, params->n_trees);
+        data_point sample[MAX_FLOW_SAVED];
+        memset(sample, 0, sizeof(sample));
+        bootstrap_sample(dataset, (unsigned)num_points, sample_size, sample);
+        train_isolation_tree(&forest->trees[t], sample, sample_size, params->max_depth);
+        printf("Tree %u: %u nodes\n", t, forest->trees[t].num_nodes);
     }
 }
 
-/* Serialize forest to BPF map */
-int serialize_forest_blocked(IsolationForest *forest, int map_fd_nodes){
-    if(!forest){
-        return -1;
-    }
-    for(unsigned int t = 0; t < forest->n_trees && t < MAX_TREES; t++){
-        int base = t * MAX_NODE_PER_TREE;
-        int cnt  = forest->trees[t].node_count;
-        for(int n = 0; n < MAX_NODE_PER_TREE; n++){
-            __u32 key_idx = base + n;
-            iTreeNode node = {};
-            if(n < cnt){
-                node = forest->trees[t].nodes[n];
+int save_forest_to_map(int map_fd_nodes, int map_fd_c, int map_fd_params, IsolationForest *forest, struct forest_params *params) {
+    if (!forest || map_fd_nodes < 0) return -1;
+
+    int total_nodes = 0;
+    for (__u32 t = 0; t < forest->n_trees && t < MAX_TREES; t++) {
+        iTree *tree = &forest->trees[t];
+        for (int n = 0; n < (int)tree->num_nodes && n < MAX_NODE_PER_TREE; n++) {
+            __u32 key = t * MAX_NODE_PER_TREE + (unsigned)n;
+            iTreeNode node = tree->nodes[n]; /* copy */
+            if (bpf_map_update_elem(map_fd_nodes, &key, &node, BPF_ANY) != 0) {
+                fprintf(stderr, "[ERROR] Failed to update node %u: %s\n", key, strerror(errno));
+                return -1;
             }
-            else {
-                node.is_leaf    = 1;
-                node.left_idx   = NULL_IDX;
-                node.right_idx  = NULL_IDX;
-                node.size       = 0;
-                node.feature    = 0;
-                node.split_value= 0;
-            }
-            if (bpf_map_update_elem(map_fd_nodes, &key_idx, &node, BPF_ANY) != 0) {
-                fprintf(stderr, "[ERROR] bpf_map_update_elem nodes key=%u failed: %s\n",
-                        key_idx, strerror(errno));
-            }
+            total_nodes++;
         }
     }
+    printf("[INFO] Saved %d nodes to map\n", total_nodes);
+
+    /* populate c(n) map if provided */
+    if (map_fd_c >= 0) {
+        for (__u32 n = 0; n <= (unsigned)TRAINING_SET; n++) {
+            double c = c_factor((int)n);
+            __u32 scaled = (__u32)(c * SCALE);
+            if (bpf_map_update_elem(map_fd_c, &n, &scaled, BPF_ANY) != 0) {
+                fprintf(stderr, "[WARN] Failed to update c(%u): %s\n", n, strerror(errno));
+                /* continue attempting others */
+            }
+        }
+        printf("[INFO] Populated xdp_isoforest_c map (0..%d)\n", TRAINING_SET);
+    }
+
+    /* save params map if provided */
+    if (map_fd_params >= 0 && params) {
+        __u32 k0 = 0;
+        if (bpf_map_update_elem(map_fd_params, &k0, params, BPF_ANY) != 0) {
+            fprintf(stderr, "[ERROR] Failed to update params map: %s\n", strerror(errno));
+            return -1;
+        }
+        printf("[INFO] Saved forest params to map\n");
+    }
+
     return 0;
 }
 
-static double path_length_point_tree(iTreeNode *nodes, int node_idx, data_point *p, int depth) {
-    if (node_idx == NULL_IDX) return depth;
-    if (node_idx < 0 || node_idx >= MAX_NODE_PER_TREE) return depth;
 
-    iTreeNode *node = &nodes[node_idx];
-
-    /* If node marked as leaf or invalid size -> treat as external */
-    if (node->is_leaf) {
-        double c = expected_path_length((int)node->size);
-        return (double)depth + c;
+int path_length_point(iTreeNode *nodes, int node_idx, data_point *dp) {
+    int length = 0;
+    if (!nodes || node_idx < 0) return 0;
+    while (node_idx != NULL_IDX && node_idx < MAX_NODE_PER_TREE) {
+        iTreeNode *node = &nodes[node_idx];
+        if (node->is_leaf) return length + (int)round(c_factor(node->num_points));
+        __u32 feat = (node->feature_idx >= 0 && node->feature_idx < MAX_FEATURES) ? node->feature_idx : 0;
+        __u32 f_val = dp->features[feat];
+        if (f_val <= node->split_value) node_idx = node->left_idx;
+        else node_idx = node->right_idx;
+        length++;
+        if (length > MAX_NODE_PER_TREE) break; /* safety */
     }
-
-    /* safety: validate feature index */
-    if (node->feature < 0 || node->feature >= MAX_FEATURES) {
-        /* malformed node, treat as leaf */
-        double c = expected_path_length((int)node->size);
-        return (double)depth + c;
-    }
-
-    __u32 fval = p->features[node->feature];
-    if (fval < ( __u32 ) node->split_value) {
-        if (node->left_idx == NULL_IDX) {
-            double c = expected_path_length((int)node->size);
-            return (double)(depth + 1) + c;
-        }
-        return path_length_point_tree(nodes, node->left_idx, p, depth + 1);
-    } else {
-        if (node->right_idx == NULL_IDX) {
-            double c = expected_path_length((int)node->size);
-            return (double)(depth + 1) + c;
-        }
-        return path_length_point_tree(nodes, node->right_idx, p, depth + 1);
-    }
+    return length;
 }
 
-static double avg_path_length_point(IsolationForest *forest, data_point *p){
+double anomaly_score_point(IsolationForest *forest, data_point *dp, __u32 sample_size) {
     if (!forest || forest->n_trees == 0) return 0.0;
-    double sum = 0.0;
-    for (unsigned int t = 0; t < forest->n_trees && t < MAX_TREES; t++){
-        /* safety: ensure this tree has nodes */
-        if (forest->trees[t].node_count == 0) {
-            /* use c(sample_size) as fallback */
-            sum += expected_path_length((int)forest->sample_size);
-            continue;
-        }
-        double h = path_length_point_tree(forest->trees[t].nodes, 0, p, 0);
-        sum += h;
+    double sum_path = 0.0;
+    for (__u32 t = 0; t < forest->n_trees; t++) {
+        sum_path += (double)path_length_point(forest->trees[t].nodes, 0, dp);
     }
-    return sum / (double)forest->n_trees;
+    double avg_path = sum_path / (double)forest->n_trees;
+    double c_n = c_factor((int)sample_size);
+    if (c_n <= 0.0) return 0.0;
+    return pow(2.0, -avg_path / c_n);
 }
 
-/* anomaly score s(x) = 2^{-E(h)/c(n)} where c(n) uses sample_size */
-static double anomaly_score_point(IsolationForest *forest, data_point *p){
-    double eh = avg_path_length_point(forest, p);
-    double cn = expected_path_length((int)forest->sample_size);
-    if (cn <= 0.0) return 0.0; /* cannot compute; return minimal score */
-    double s = pow(2.0, - (eh / cn));
-    return s;
+int is_anomaly(double score, struct forest_params *params) {
+    if (!params) return 0;
+    return (score * SCALE >= (double)params->threshold) ? 1 : 0;
 }
 
-/* comparator for qsort */
-static int cmp_double(const void *pa, const void *pb) {
-    double a = *(const double*)pa;
-    double b = *(const double*)pb;
-    if (a < b) return -1;
-    if (a > b) return 1;
-    return 0;
+/*=============== Testing helper ===============*/
+void test_forest_accuracy(IsolationForest *forest, data_point *test_data, int test_count, struct forest_params *params) {
+    if (!forest || !test_data || test_count <= 0) return;
+    int correct = 0;
+    for (int i = 0; i < test_count; i++) {
+        double score = anomaly_score_point(forest, &test_data[i], params->sample_size);
+        int pred = is_anomaly(score, params);
+        int actual = (test_data[i].label != 0) ? 1 : 0;
+        if (pred == actual) correct++;
+        if (i < 10) {
+            printf("Test %d: score=%.4f pred=%d actual=%d\n", i, score, pred, actual);
+        }
+    }
+    printf("[INFO] Accuracy: %d/%d = %.2f%%\n", correct, test_count, (double)correct/test_count*100.0);
 }
 
 /*==================== MAIN ====================*/
-int main(int argc, char **argv){
+int main(int argc, char **argv) {
     srand(time(NULL));
-
     struct bpf_map_info info = {0};
     char pin_dir[PATH_MAX];
-    int map_fd_flow = -1, map_fd_nodes = -1, map_fd_params = -1, map_fd_c = -1;
-    double contamination = 0.01;
+    int map_fd_nodes = -1, map_fd_params = -1, map_fd_c = -1;
+    int len;
 
-    struct config cfg = { .ifindex=-1, .do_unload=false };
-    const char *__doc__ = "Train IsolationForest and push to XDP BPF maps, then test dataset\n";
+    struct config cfg = {.ifindex = -1, .do_unload = false};
+    const char *__doc__ = "Train IsolationForest and load into XDP BPF maps\n";
     parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
-    if(cfg.ifindex==-1){
-        fprintf(stderr, "[ERROR] Missing required --dev\n");
-        usage(argv[0], __doc__, long_options, (argc==1));
+
+    if (cfg.ifindex == -1) {
+        fprintf(stderr, "ERR: required option --dev missing\n");
+        usage(argv[0], __doc__, long_options, (argc == 1));
         return EXIT_FAIL_OPTION;
     }
 
-    /* parse optional contamination arg */
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--contamination") == 0 && i + 1 < argc) {
-            contamination = atof(argv[i+1]);
-            if (contamination < 0.0) contamination = 0.0;
-            if (contamination > 0.5) contamination = 0.5;
-        }
+    len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, cfg.ifname);
+    if (len < 0) {
+        fprintf(stderr, "ERR: creating pin dirname\n");
+        return EXIT_FAIL_OPTION;
     }
 
-    snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, cfg.ifname);
-    map_fd_flow   = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
-    map_fd_nodes  = open_bpf_map_file(pin_dir, "xdp_isoforest_nodes", &info);
+    /* Open pinned maps */
+    map_fd_nodes = open_bpf_map_file(pin_dir, "xdp_isoforest_nodes", &info);
+    if (map_fd_nodes < 0) {
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_isoforest_nodes'\n", pin_dir);
+        return EXIT_FAIL_BPF;
+    }
+
+    map_fd_c = open_bpf_map_file(pin_dir, "xdp_isoforest_c", &info);
+    if (map_fd_c < 0) {
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_isoforest_c'\n", pin_dir);
+        close(map_fd_nodes);
+        return EXIT_FAIL_BPF;
+    }
+
     map_fd_params = open_bpf_map_file(pin_dir, "xdp_isoforest_params", &info);
-    map_fd_c      = open_bpf_map_file(pin_dir, "xdp_isoforest_c", &info);
-
-    if(map_fd_flow < 0 || map_fd_nodes < 0 || map_fd_params < 0 || map_fd_c < 0){
-        fprintf(stderr, "[ERROR] Failed to open one or more required BPF maps\n");
-        /* close any opened fd */
-        if (map_fd_flow >= 0) close(map_fd_flow);
-        if (map_fd_nodes >= 0) close(map_fd_nodes);
-        if (map_fd_params >= 0) close(map_fd_params);
-        if (map_fd_c >= 0) close(map_fd_c);
+    if (map_fd_params < 0) {
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_isoforest_params'\n", pin_dir);
+        close(map_fd_nodes);
+        close(map_fd_c);
         return EXIT_FAIL_BPF;
     }
 
-    /*==================== Training ====================*/
+    /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/benign_data.csv",
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/training_data.csv",
                                        train_dataset, TRAINING_SET);
-    if(train_count < 1){
-        fprintf(stderr, "[ERROR] Training CSV empty or invalid\n");
-        close(map_fd_flow); close(map_fd_nodes); close(map_fd_params); close(map_fd_c);
-        return EXIT_FAIL_OPTION;
+    if (train_count < 1) {
+        fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
+        close(map_fd_nodes);
+        close(map_fd_params);
+        close(map_fd_c);
+        return EXIT_FAILURE;
     }
-    printf("[INFO] Read %d training flows\n", train_count);
+    printf("[INFO] Loaded %d training samples\n", train_count);
 
-    const __u32 n_trees     = MAX_TREES;
-    const __u32 sample_size = (train_count < 128) ? train_count : 128;
-    const __u32 max_depth   = 10;
+    /* Initialize forest */
+    IsolationForest forest;
+    init_forest(&forest, 16, 8); /* 16 trees, max_depth 8 */
 
-    IsolationForest *forest = init_iForest(n_trees, sample_size, max_depth);
-    if(!forest){
-        fprintf(stderr, "[ERROR] init_iForest failed\n");
-        close(map_fd_flow); close(map_fd_nodes); close(map_fd_params); close(map_fd_c);
-        return EXIT_FAIL_BPF;
-    }
+    struct forest_params params;
+    memset(&params, 0, sizeof(params));
+    params.n_trees = 16;
+    params.sample_size = (train_count > MAX_FLOW_SAVED) ? MAX_FLOW_SAVED : train_count;
+    params.max_depth = 8;
+    params.threshold = 600; /* example scaled threshold */
 
-    fit_iForest(forest, train_dataset, train_count);
+    /* Train */
+    printf("[INFO] Starting Isolation Forest training...\n");
+    train_isolation_forest(&forest, train_dataset, train_count, &params);
+    printf("[INFO] Isolation Forest trained with %u trees\n", forest.n_trees);
 
-    if (serialize_forest_blocked(forest, map_fd_nodes) != 0) {
-        fprintf(stderr, "[WARN] serialize_forest_blocked returned error\n");
-    } else {
-        printf("[INFO] Serialized forest to BPF map\n");
-    }
+    /* Basic test */
+    int test_samples = (train_count > 100) ? 100 : train_count;
+    test_forest_accuracy(&forest, train_dataset, test_samples, &params);
 
-    /* push c(n) table */
-    for (int n = 0; n <= (int)sample_size && n <= TRAINING_SET; n++) {
-        double c = expected_path_length(n);
-        __u32 c_scaled = (__u32)(c * (double)SCALE + 0.5);
-        __u32 key = (__u32)n;
-        if (bpf_map_update_elem(map_fd_c, &key, &c_scaled, BPF_ANY) != 0) {
-            fprintf(stderr, "[ERROR] Failed push c(%d) scaled=%u : %s\n",
-                    n, c_scaled, strerror(errno));
-        } else {
-            if (n <= 4) /* debug */
-                printf("[DEBUG] pushed c(%d)=%.6f -> scaled=%u\n", n, c, c_scaled);
-        }
-    }
-    printf("[DEBUG] Finished pushing c(n)\n");
-
-    /*==================== Compute anomaly scores ====================*/
-    double *scores = calloc(train_count, sizeof(double));
-    if (!scores) {
-        fprintf(stderr, "[ERROR] calloc scores failed\n");
-        free_iForest(forest);
-        close(map_fd_flow); close(map_fd_nodes); close(map_fd_params); close(map_fd_c);
+    /* Save to maps (nodes + c(n) + params) */
+    if (save_forest_to_map(map_fd_nodes, map_fd_c, map_fd_params, &forest, &params) != 0) {
+        fprintf(stderr, "[ERROR] Failed to save forest to maps\n");
+        close(map_fd_nodes);
+        close(map_fd_c);
+        close(map_fd_params);
         return EXIT_FAILURE;
     }
 
-    printf("[DEBUG] Start computing anomaly scores (this may take a bit)...\n");
-    for (int i = 0; i < train_count; i++) {
-        if ((i & 127) == 0) { /* progress every 128 points */
-            printf("[DEBUG] scoring %d/%d\n", i, train_count);
-        }
-        scores[i] = anomaly_score_point(forest, &train_dataset[i]);
-    }
-    printf("[DEBUG] Done compute anomaly scores\n");
+    printf("[INFO] Successfully updated BPF maps\n");
+    printf("[INFO] Forest params: n_trees=%u, max_depth=%u, sample_size=%u, threshold=%u\n",
+           params.n_trees, params.max_depth, params.sample_size, params.threshold);
 
-    qsort(scores, train_count, sizeof(double), cmp_double);
-
-    // double sum_scores = 0.0;
-    // for (int i = 0; i < train_count; i++) {
-    //     sum_scores += scores[i];
-    // }
-    // double threshold_score = sum_scores / train_count;
-
-    int n_anom = (int)ceil(contamination * (double)train_count);
-    if (n_anom < 1) n_anom = 1;
-    if (n_anom >= train_count) n_anom = train_count - 1;
-
-    int idx = train_count - n_anom;  // top n_anom điểm cao nhất
-    if (idx < 0) idx = 0;
-
-    double threshold_score = scores[idx];
-    /* compute E_threshold = - c(sample_size) * log2(threshold_score) as unscaled integer */
-    double c_sample = expected_path_length((int)sample_size);
-    if (threshold_score <= 0.0) threshold_score = 1e-12; /* avoid log(0) */
-    double e_threshold = - c_sample * ( log(threshold_score) / log(2.0) ); /* log2 */
-    __u32 params_threshold_scaled = (__u32)(e_threshold * SCALE + 0.5);
-
-    printf("[INFO] mean threshold_score=%.6f, c(sample)=%.6f, "
-           "E_threshold=%.6f -> params.threshold=%u\n",
-           threshold_score, c_sample, e_threshold, params_threshold_scaled);
-    /* push forest params (threshold is unscaled integer E_threshold) */
-    struct forest_params params = {
-        .n_trees = n_trees,
-        .sample_size = sample_size,
-        .threshold = params_threshold_scaled
-    };
-    __u32 param_key = 0;
-    if (bpf_map_update_elem(map_fd_params, &param_key, &params, BPF_ANY) != 0) {
-        fprintf(stderr, "[ERROR] Failed to update forest params map: %s\n", strerror(errno));
-    } else {
-        printf("[INFO] Pushed forest params to BPF map\n");
-    }
-
-    /* count anomalies in training set for information */
-    int cnt_train_anom = 0;
-    for (int i = 0; i < train_count; i++) {
-        if (scores[i] >= threshold_score) cnt_train_anom++;
-    }
-    printf("[INFO] threshold_score=%.6f -> marked %d/%d training points as anomalies\n",
-           threshold_score, cnt_train_anom, train_count);
-
-    free(scores);
-    free_iForest(forest);
-    close(map_fd_flow);
     close(map_fd_nodes);
-    close(map_fd_params);
     close(map_fd_c);
-
-    printf("[INFO] Done training and pushing model + threshold to BPF maps\n");
-    return EXIT_OK;
+    close(map_fd_params);
+    return EXIT_SUCCESS;
 }

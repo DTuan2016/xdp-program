@@ -12,7 +12,8 @@
 #define MAX_FEATURES        5
 #define MAX_TREES           75
 #define MAX_NODE_PER_TREE   64
-#define NULL_IDX            UINT32_MAX
+#define NULL_IDX            -1
+#define MAX_TEST            100
 // #define EXIT_FAIL_OPTION    1
 // #define EXIT_FAIL_BPF       2
 // #define EXIT_FAIL_MEM       3
@@ -45,28 +46,30 @@ typedef struct {
 typedef struct iTreeNode{
     int left_idx;
     int right_idx;
-    int feature;
+    int feature_idx;
     int split_value;             /* Have to SCALE */
-    int size;
+    int num_points;
     int is_leaf;
 } iTreeNode;
 
 typedef struct iTree{
     iTreeNode nodes[MAX_NODE_PER_TREE];
-    __u32     node_count;
+    __u32     num_nodes;
+    __u32     max_depth;
 }iTree;
 
 typedef struct{
     iTree trees[MAX_TREES];
     __u32 n_trees;
-    __u32 sample_size;
     __u32 max_depth;
+    __u32 sample_size;
 }IsolationForest;
 
 struct forest_params {
     __u32 n_trees;
     __u32 sample_size;
     __u32 threshold; /* integer threshold on avg path length */
+    __u32 max_depth;
 };
 
 /* XDP action definitions for compatibility */

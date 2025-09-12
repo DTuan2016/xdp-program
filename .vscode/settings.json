@@ -1,6 +1,14 @@
 {
     "files.associations": {
         "compare": "c",
-        "cstdint": "c"
+        "cstdint": "c",
+        "cmath": "c",
+        "string": "c",
+        "random": "c",
+        "functional": "c",
+        "limits": "c",
+        "streambuf": "c",
+        "tuple": "c",
+        "type_traits": "c"
     }
 }
