@@ -64,37 +64,30 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
         data_point dp = {0};
         int index, src_port;
         char src_ip[64];
-        double flow_duration, fwd_packets, bwd_packets, len_fwd_pkts;
+        double flow_duration, flow_bytes_per_s, flow_pkts_per_s, len_fwd_pkts;
         double len_bwd_pkts, flow_IAT_mean;
         int label;
         
         int n = sscanf(line,
                        "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
                        &index, src_ip, &src_port,
-                       &flow_duration, &fwd_packets, &bwd_packets,
+                       &flow_duration, &flow_bytes_per_s, &flow_pkts_per_s,
                        &len_fwd_pkts, &len_bwd_pkts, &flow_IAT_mean,
                        &label);
 
         if (n != 10) continue;
 
-        // Validate input data
-        if (flow_duration <= 0 || (fwd_packets + bwd_packets) <= 0) {
-            continue;
-        }
-
         // Calculate features correctly
-        double total_packets = fwd_packets + bwd_packets;
         double total_length = len_fwd_pkts + len_bwd_pkts;
         
         dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds
-        dp.total_pkts       = (__u32)total_packets;
         dp.total_bytes      = (__u64)total_length;
-        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); 
-        dp.pkt_len_mean     = (__u32)(total_length / total_packets);
+        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds
+        dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
         
         // Calculate per-second rates
-        dp.flow_pkts_per_s  = (__u32)((total_packets * 1000000.0) / flow_duration);
-        dp.flow_bytes_per_s = (__u32)((total_length * 1000000.0) / flow_duration);
+        dp.flow_pkts_per_s  = flow_pkts_per_s;
+        dp.flow_bytes_per_s = flow_bytes_per_s;
 
         /* Copy to dp.features[] - order must match kernel */
         dp.features[0] = (__u32)dp.flow_duration;
@@ -388,6 +381,14 @@ void test_forest_accuracy(IsolationForest *forest, data_point *test_data, int te
     printf("[INFO] Accuracy: %d/%d = %.2f%%\n", correct, test_count, (double)correct/test_count*100.0);
 }
 
+int cmp_double_desc(const void *a, const void *b) {
+    double da = *(const double *)a;
+    double db = *(const double *)b;
+    if (da < db) return 1;
+    else if (da > db) return -1;
+    else return 0;
+}
+
 /*==================== MAIN ====================*/
 int main(int argc, char **argv) {
     srand(time(NULL));
@@ -436,7 +437,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/training_data.csv",
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/portmap_data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
@@ -449,20 +450,33 @@ int main(int argc, char **argv) {
 
     /* Initialize forest */
     IsolationForest forest;
-    init_forest(&forest, 16, 8); /* 16 trees, max_depth 8 */
+    init_forest(&forest, MAX_TREES, MAX_DEPTH); /* 16 trees, max_depth 8 */
 
     struct forest_params params;
     memset(&params, 0, sizeof(params));
-    params.n_trees = 16;
-    params.sample_size = (train_count > MAX_FLOW_SAVED) ? MAX_FLOW_SAVED : train_count;
-    params.max_depth = 8;
-    params.threshold = 600; /* example scaled threshold */
+    params.n_trees = MAX_TREES;
+    params.sample_size = MAX_SAMPLE_PER_NODE;
+    params.max_depth = MAX_DEPTH;
+    // params.threshold = 600; /* example scaled threshold */
+    params.contamination = CONTAMINATION;
 
     /* Train */
     printf("[INFO] Starting Isolation Forest training...\n");
     train_isolation_forest(&forest, train_dataset, train_count, &params);
     printf("[INFO] Isolation Forest trained with %u trees\n", forest.n_trees);
+    double *scores = malloc(train_count * sizeof(double));
+    for (int i = 0; i < train_count; i++) {
+        scores[i] = anomaly_score_point(&forest, &train_dataset[i], params.sample_size);
+    }
 
+    double max_score = 0.0;
+    for (int i = 0; i < train_count; i++) {
+        double score = anomaly_score_point(&forest, &train_dataset[i], params.sample_size);
+        if (score > max_score) max_score = score;
+    }
+
+    // Scale threshold
+    params.threshold = (uint32_t)(max_score * SCALE);
     /* Basic test */
     int test_samples = (train_count > 100) ? 100 : train_count;
     test_forest_accuracy(&forest, train_dataset, test_samples, &params);

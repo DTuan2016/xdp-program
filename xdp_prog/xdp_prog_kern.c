@@ -243,7 +243,7 @@ static __always_inline int is_anomaly(data_point *dp)
 
     __u32 avg_depth = ((__u32)total_depth * SCALE) / n_trees;
 
-    return (avg_depth < params->threshold) ? 1 : 0;
+    return (avg_depth > params->threshold) ? 1 : 0;
 }
 
 /* ================= XDP PROGRAM ================= */
@@ -261,10 +261,10 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (!dp) return XDP_PASS;
 
     if (is_anomaly(dp)) {
-        dp->label = 0;
+        dp->label = 1;
         bpf_map_update_elem(&flow_dropped, &key, dp, BPF_ANY);
     } else {
-        dp->label = 1;
+        dp->label = 0;
     }
     bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
     return XDP_PASS;

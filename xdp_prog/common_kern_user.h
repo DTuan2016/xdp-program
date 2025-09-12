@@ -10,14 +10,13 @@
 #define TRAINING_SET        1000
 #define MAX_FLOW_SAVED      100
 #define MAX_FEATURES        5
-#define MAX_TREES           75
-#define MAX_NODE_PER_TREE   64
+#define MAX_TREES           50
+#define MAX_NODE_PER_TREE   128
+#define MAX_SAMPLE_PER_NODE 256
 #define NULL_IDX            -1
 #define MAX_TEST            100
-// #define EXIT_FAIL_OPTION    1
-// #define EXIT_FAIL_BPF       2
-// #define EXIT_FAIL_MEM       3
-// #define EXIT_OK             0
+#define MAX_DEPTH           8
+#define CONTAMINATION       10
 
 /* Flow identification key */
 struct flow_key {
@@ -70,6 +69,7 @@ struct forest_params {
     __u32 sample_size;
     __u32 threshold; /* integer threshold on avg path length */
     __u32 max_depth;
+    __u32 contamination;
 };
 
 /* XDP action definitions for compatibility */
