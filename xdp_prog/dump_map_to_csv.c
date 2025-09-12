@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <bpf/bpf.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
 
 #include "common_kern_user.h"
 
@@ -32,10 +33,11 @@ static void print_node_csv(FILE *f, __u32 key, const Node *node) {
 }
 
 static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
-    fprintf(f, "%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
-            key->src_ip,
-            ntohs(key->src_port),
-            key->padding,
+    struct in_addr ip_addr;
+    ip_addr.s_addr = key->src_ip;
+    fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%u\n",
+            inet_ntoa(ip_addr),
+            key->src_port,
             dp->features[0],
             dp->features[1],
             dp->features[2],
@@ -97,7 +99,7 @@ int main(int argc, char **argv) {
     }
 
     FILE *f_nodes = fopen("randforest_nodes.csv", "w");
-    FILE *f_flows = fopen("flow_tracking.csv", "w");
+    FILE *f_flows = fopen("flow_tracking_attack.csv", "w");
     if (!f_nodes || !f_flows) {
         perror("fopen");
         return EXIT_FAILURE;
@@ -105,7 +107,7 @@ int main(int argc, char **argv) {
 
     /* Header CSV */
     fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Reserved\n");
-    fprintf(f_flows, "SrcIP,SrcPort,Padding,StartTS,LastSeen,FlowDuration,TotalPkts,TotalBytes,SumIAT,Label\n");
+    fprintf(f_flows, "SrcIP,SrcPort,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
 
     dump_nodes_to_csv(map_fd_nodes, f_nodes);
     dump_flow_map_to_csv(map_fd_flows, f_flows);

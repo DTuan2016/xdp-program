@@ -93,7 +93,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     } else {
         key->src_port = 0;
     }
-
+    key->src_port = bpf_ntohs(key->src_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
@@ -201,11 +201,11 @@ static __always_inline int predict_forest(data_point *dp)
     if (!params || params->n_trees == 0)
         return 0;
 
-    __u32 max_trees = (params->n_trees > MAX_FOREST_TREES) ? MAX_FOREST_TREES : params->n_trees;
+    __u32 max_trees = (params->n_trees > MAX_TREES) ? MAX_TREES : params->n_trees;
 
     int votes0 = 0, votes1 = 0;
 
-    #pragma unroll MAX_FOREST_TREES
+    #pragma unroll MAX_TREES
     for (__u32 t = 0; t < max_trees; t++) {
         int pred = predict_tree(t, dp);
         if (pred == 0)

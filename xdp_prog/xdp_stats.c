@@ -54,37 +54,30 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
         data_point dp = {0};
         int index, src_port;
         char src_ip[64];
-        double flow_duration, fwd_packets, bwd_packets, len_fwd_pkts;
+        double flow_duration, flow_bytes_per_s, flow_pkts_per_s, len_fwd_pkts;
         double len_bwd_pkts, flow_IAT_mean;
         int label;
         
         int n = sscanf(line,
                        "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
                        &index, src_ip, &src_port,
-                       &flow_duration, &fwd_packets, &bwd_packets,
+                       &flow_duration, &flow_bytes_per_s, &flow_pkts_per_s,
                        &len_fwd_pkts, &len_bwd_pkts, &flow_IAT_mean,
                        &label);
 
         if (n != 10) continue;
 
-        // Validate input data
-        if (flow_duration <= 0 || (fwd_packets + bwd_packets) <= 0) {
-            continue;
-        }
-
         // Calculate features correctly
-        double total_packets = fwd_packets + bwd_packets;
         double total_length = len_fwd_pkts + len_bwd_pkts;
         
-        dp.flow_duration    = (__u64)(flow_duration * 1000000); // Convert to microseconds
-        dp.total_pkts       = (__u32)total_packets;
+        dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds
         dp.total_bytes      = (__u64)total_length;
-        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean * 1000); // Convert to microseconds
-        dp.pkt_len_mean     = (__u32)(total_length / total_packets);
+        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds
+        dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
         
         // Calculate per-second rates
-        dp.flow_pkts_per_s  = (__u32)((total_packets * 1000000.0) / flow_duration);
-        dp.flow_bytes_per_s = (__u32)((total_length * 1000000.0) / flow_duration);
+        dp.flow_pkts_per_s  = flow_pkts_per_s;
+        dp.flow_bytes_per_s = flow_bytes_per_s;
 
         /* Copy to dp.features[] - order must match kernel */
         dp.features[0] = (__u32)dp.flow_duration;
@@ -486,7 +479,7 @@ int main(int argc, char **argv) {
 
     // Load dataset
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/training_data.csv",
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/portmap_data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
@@ -497,10 +490,10 @@ int main(int argc, char **argv) {
     // Initialize RandomForest parameters
     RandomForest rf = {0};
     struct forest_params params = {
-        .n_trees = (MAX_TREES > 16) ? 16 : MAX_TREES, // Limit trees for performance
-        .max_depth = 8, // Reasonable depth
+        .n_trees = MAX_TREES,
+        .max_depth = MAX_TREE_DEPTH, // Reasonable depth
         .sample_size = (train_count > MAX_SAMPLES_PER_NODE) ? MAX_SAMPLES_PER_NODE : train_count,
-        .min_samples_split = 5
+        .min_samples_split = 2
     };
 
     // Train RandomForest
@@ -525,7 +518,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    printf("[INFO] ✓ Successfully updated BPF maps\n");
+    printf("[INFO] Successfully updated BPF maps\n");
     printf("[INFO] Forest params: n_trees=%u, max_depth=%u, sample_size=%u, min_samples_split=%u\n",
            params.n_trees, params.max_depth, params.sample_size, params.min_samples_split);
 
