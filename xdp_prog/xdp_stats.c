@@ -437,7 +437,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/portmap_data.csv",
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/processed/train_portmap_data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
@@ -450,20 +450,20 @@ int main(int argc, char **argv) {
 
     /* Initialize forest */
     IsolationForest forest;
-    init_forest(&forest, MAX_TREES, MAX_DEPTH); /* 16 trees, max_depth 8 */
+    init_forest(&forest, MAX_TREES, MAX_DEPTH);
 
     struct forest_params params;
     memset(&params, 0, sizeof(params));
     params.n_trees = MAX_TREES;
     params.sample_size = MAX_SAMPLE_PER_NODE;
     params.max_depth = MAX_DEPTH;
-    // params.threshold = 600; /* example scaled threshold */
     params.contamination = CONTAMINATION;
 
     /* Train */
     printf("[INFO] Starting Isolation Forest training...\n");
     train_isolation_forest(&forest, train_dataset, train_count, &params);
     printf("[INFO] Isolation Forest trained with %u trees\n", forest.n_trees);
+    /* Compute anomaly scores for training set */
     double *scores = malloc(train_count * sizeof(double));
     for (int i = 0; i < train_count; i++) {
         scores[i] = anomaly_score_point(&forest, &train_dataset[i], params.sample_size);
@@ -474,13 +474,21 @@ int main(int argc, char **argv) {
         double score = anomaly_score_point(&forest, &train_dataset[i], params.sample_size);
         if (score > max_score) max_score = score;
     }
+    /* Sort scores */
+    qsort(scores, train_count, sizeof(double), cmp_double_desc);
 
-    // Scale threshold
-    params.threshold = (uint32_t)(max_score * SCALE);
-    /* Basic test */
-    int test_samples = (train_count > 100) ? 100 : train_count;
-    test_forest_accuracy(&forest, train_dataset, test_samples, &params);
+    /* Select threshold based on contamination */
+    int threshold_index = (int)((1.0 - (double)params.contamination/SCALE) * train_count);
+    if (threshold_index >= train_count) threshold_index = train_count - 1;
+    if (threshold_index < 0) threshold_index = 0;
 
+    double threshold_score = scores[threshold_index];
+
+    /* Convert score threshold -> depth threshold */
+    double c_n = c_factor(params.sample_size);
+    double depth_threshold = -log2(threshold_score) * c_n;
+
+    params.threshold = (__u32)(depth_threshold * SCALE);
     /* Save to maps (nodes + c(n) + params) */
     if (save_forest_to_map(map_fd_nodes, map_fd_c, map_fd_params, &forest, &params) != 0) {
         fprintf(stderr, "[ERROR] Failed to save forest to maps\n");
