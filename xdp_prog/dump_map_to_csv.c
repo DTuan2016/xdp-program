@@ -87,7 +87,7 @@ int main(int argc, char **argv)
     }
 
     // FILE *f = fopen("/home/dongtv/dtuan/data_pcap/lof_results/lof_2_13.csv", "w");
-    FILE *f = fopen("/home/dongtv/dtuan/data_pcap/lof_results/benign.csv", "w");
+    FILE *f = fopen("benign.csv", "w");
     if (!f) {
         perror("fopen");
         return EXIT_FAILURE;
