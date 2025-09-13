@@ -162,14 +162,13 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     return dp;
 }
 
-/* ================= RANDOM FOREST INFERENCE ================= */
-static __always_inline int predict_tree(__u32 tree_idx, data_point *dp)
+static __always_inline int predict_one_tree(__u32 root_idx, const data_point *dp)
 {
-    __u32 node_idx = tree_idx * MAX_NODE_PER_TREE;
+    __u32 node_idx = root_idx;
 
     #pragma unroll MAX_TREE_DEPTH
     for (int depth = 0; depth < MAX_TREE_DEPTH; depth++) {
-        if (node_idx >= MAX_TREES * MAX_NODE_PER_TREE)
+        if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE))
             return 0;
 
         Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
@@ -184,9 +183,14 @@ static __always_inline int predict_tree(__u32 tree_idx, data_point *dp)
             return 0;
 
         __u32 f_val = dp->features[f_idx];
+        __s32 split = node->split_value;
 
-        __u32 next_idx = (f_val <= node->split_value) ? node->left_idx : node->right_idx;
-        if (next_idx == (__u32)-1 || next_idx >= MAX_TREES * MAX_NODE_PER_TREE)
+        __u32 next_idx = (f_val <= ( (__u32) split )) ? node->left_idx : node->right_idx;
+
+        if (next_idx == (__u32)-1)
+            return node->split_value ? 1 : 0;
+
+        if (next_idx >= (MAX_TREES * MAX_NODE_PER_TREE))
             return node->split_value ? 1 : 0;
 
         node_idx = next_idx;
@@ -194,6 +198,7 @@ static __always_inline int predict_tree(__u32 tree_idx, data_point *dp)
     return 0;
 }
 
+/* ================= RANDOM FOREST INFERENCE ================= */
 static __always_inline int predict_forest(data_point *dp)
 {
     __u32 key = 0;
@@ -207,13 +212,13 @@ static __always_inline int predict_forest(data_point *dp)
 
     #pragma unroll MAX_TREES
     for (__u32 t = 0; t < max_trees; t++) {
-        int pred = predict_tree(t, dp);
+        __u32 root_key = t * MAX_NODE_PER_TREE + 0;
+        int pred = predict_one_tree(root_key, dp);
         if (pred == 0)
             votes0++;
         else
             votes1++;
     }
-
     return (votes1 > votes0) ? 1 : 0;
 }
 
@@ -237,8 +242,8 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     int pred = predict_forest(target);
     target->label = pred ? 1 : 0;
 
-    if (pred)
-        bpf_map_update_elem(&flow_dropped, &key, target, BPF_ANY);
+    // if (pred)
+    //     bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
 
     bpf_map_update_elem(&xdp_flow_tracking, &key, target, BPF_ANY);
     return XDP_PASS;

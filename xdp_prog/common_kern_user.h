@@ -7,17 +7,17 @@
 #include <stdint.h>
 #include <math.h>
 /*Config numbers of total data_points to training*/
-#define TRAINING_SET         1000
+#define TRAINING_SET         3200
 /*Config numbers of flow to save to map xdp_flow_tracking or flow_dropped*/
-#define MAX_FLOW_SAVED       100
+#define MAX_FLOW_SAVED       200
 /*Config random forest*/
-#define MAX_TREES            32
+#define MAX_TREES            50
 #define MAX_NODE_PER_TREE    256
-#define MAX_SAMPLES_PER_NODE 20
+#define MAX_SAMPLES_PER_NODE 100
 /*log2(TRAINING SET)*/     
 #define MAX_TREE_DEPTH       8
 /*Don't configure here*/
-#define NULL_IDX             UINT32_MAX
+#define NULL_IDX             -1
 #define MAX_FEATURES         5
 #define SCALE                1000
 /* Flow identification key */

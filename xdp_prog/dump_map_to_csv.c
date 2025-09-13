@@ -10,7 +10,6 @@
 
 #include "common_kern_user.h"
 
-/* chỉ khai báo prototype cần dùng */
 int open_bpf_map_file(const char *pin_dir,
                       const char *mapname,
                       struct bpf_map_info *info);
@@ -29,7 +28,7 @@ static void print_node_csv(FILE *f, __u32 key, const Node *node) {
             node->feature_idx,
             node->split_value,
             node->is_leaf,
-            0); // Reserved / Size field if cần
+            0);
 }
 
 static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
@@ -51,7 +50,6 @@ static void dump_nodes_to_csv(int map_fd, FILE *f) {
     __u32 key = 0, next_key;
     Node node;
 
-    /* Iterate map */
     while (bpf_map_get_next_key(map_fd, &key, &next_key) == 0) {
         if (bpf_map_lookup_elem(map_fd, &next_key, &node) == 0) {
             print_node_csv(f, next_key, &node);
@@ -77,14 +75,18 @@ static void dump_flow_map_to_csv(int map_fd, FILE *f) {
 
 /* ================= MAIN ================= */
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <ifname>\n", argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "Usage: %s <ifname> <nodes_out.csv> <flows_out.csv>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
+    const char *ifname = argv[1];
+    const char *nodes_filename = argv[2];
+    const char *flows_filename = argv[3];
+
     struct bpf_map_info info = {0};
     char pin_dir[PATH_MAX];
-    snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, argv[1]);
+    snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, ifname);
 
     int map_fd_nodes = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
     if (map_fd_nodes < 0) {
@@ -98,8 +100,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    FILE *f_nodes = fopen("randforest_nodes.csv", "w");
-    FILE *f_flows = fopen("flow_tracking_attack.csv", "w");
+    FILE *f_nodes = fopen(nodes_filename, "w");
+    FILE *f_flows = fopen(flows_filename, "w");
     if (!f_nodes || !f_flows) {
         perror("fopen");
         return EXIT_FAILURE;
@@ -115,8 +117,8 @@ int main(int argc, char **argv) {
     fclose(f_nodes);
     fclose(f_flows);
 
-    printf("Dumped xdp_randforest_nodes -> randforest_nodes.csv\n");
-    printf("Dumped xdp_flow_tracking -> flow_tracking.csv\n");
+    printf("Dumped xdp_randforest_nodes -> %s\n", nodes_filename);
+    printf("Dumped xdp_flow_tracking -> %s\n", flows_filename);
 
     return EXIT_SUCCESS;
 }

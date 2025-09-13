@@ -284,19 +284,30 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
         }
     }
 
-    // Find next available node indices
-    int left_node_idx = tree->node_count;
-    int right_node_idx = tree->node_count + 1;
+    int left_node_idx = tree->node_count; /* next free index */
+    if (left_node_idx >= MAX_NODE_PER_TREE) { free(left); free(right); return -1; }
 
-    if (left_node_idx >= MAX_NODE_PER_TREE || right_node_idx >= MAX_NODE_PER_TREE) {
-        free(left);
-        free(right);
+    int left_ret = build_tree(tree, left, left_count, depth + 1, left_node_idx);
+    if (left_ret < 0) {
+        free(left); free(right);
         return -1;
     }
 
-    // Build subtrees
-    node->left_idx = build_tree(tree, left, left_count, depth + 1, left_node_idx);
-    node->right_idx = build_tree(tree, right, right_count, depth + 1, right_node_idx);
+    /* get next free index AFTER left subtree was created */
+    int right_node_idx = tree->node_count;
+    if (right_node_idx >= MAX_NODE_PER_TREE) {
+        free(left); free(right);
+        return -1;
+    }
+
+    int right_ret = build_tree(tree, right, right_count, depth + 1, right_node_idx);
+    if (right_ret < 0) {
+        free(left); free(right);
+        return -1;
+    }
+
+    node->left_idx = left_ret;
+    node->right_idx = right_ret;
 
     free(left);
     free(right);
@@ -387,7 +398,7 @@ int predict_tree_userspace(const DecisionTree *tree, const data_point *dp) {
     int idx = 0;
     int depth = 0;
     
-    while (depth < 32) { // Prevent infinite loops
+    while (depth < MAX_TREE_DEPTH) { // Prevent infinite loops
         if (idx < 0 || idx >= tree->node_count) return 0;
         
         const Node *node = &tree->nodes[idx];
@@ -479,7 +490,7 @@ int main(int argc, char **argv) {
 
     // Load dataset
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/portmap_data.csv",
+    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/processed/train_portmap_data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
@@ -501,11 +512,6 @@ int main(int argc, char **argv) {
     train_random_forest(&rf, train_dataset, train_count, &params);
     printf("[INFO] RandomForest trained with %u trees\n", rf.n_trees);
 
-    // Test accuracy on training data (basic sanity check)
-    printf("[INFO] Testing accuracy on training data...\n");
-    int test_samples = (train_count > 100) ? 100 : train_count;
-    test_forest_accuracy(&rf, train_dataset, test_samples);
-
     // Save to BPF maps
     if (save_forest_to_map(map_fd_nodes, &rf) != 0) {
         fprintf(stderr, "[ERROR] Failed to update xdp_randforest_nodes\n");
@@ -517,6 +523,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[ERROR] Failed to update xdp_randforest_params: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
+
+    data_point test_dataset[MAX_FLOW_SAVED];
+    int test_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/processed/test_portmap_data.csv",
+                                       test_dataset, MAX_FLOW_SAVED);
+    if (test_count < 1) {
+        fprintf(stderr, "[ERROR] Testing dataset empty or invalid\n");
+        return EXIT_FAILURE;
+    }
+    printf("[INFO] Loaded %d testing samples\n", test_count);
+
+    test_forest_accuracy(&rf, test_dataset, MAX_FLOW_SAVED);
 
     printf("[INFO] Successfully updated BPF maps\n");
     printf("[INFO] Forest params: n_trees=%u, max_depth=%u, sample_size=%u, min_samples_split=%u\n",
