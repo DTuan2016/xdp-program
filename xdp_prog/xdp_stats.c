@@ -70,9 +70,9 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
         // Calculate features correctly
         double total_length = len_fwd_pkts + len_bwd_pkts;
         
-        dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds
+        dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds (assumption)
         dp.total_bytes      = (__u64)total_length;
-        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds
+        dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds (assumption)
         dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
         
         // Calculate per-second rates
@@ -137,17 +137,15 @@ void find_best_split(data_point *points, int num_points,
     *best_threshold = 0;
     
     double parent_impurity = getGiniImpurity(points, num_points);
-    if (parent_impurity == 0.0) return; // Pure node, no split needed
+    if (parent_impurity == 0.0) return;
 
-    // Try different thresholds for each feature
     for (int f = 0; f < MAX_FEATURES; f++) {
-        // Sort points by feature f to find good thresholds
-        __u32 feature_values[num_points];
+        __u32 *feature_values = malloc(sizeof(__u32) * num_points);
+        if (!feature_values) continue;
         for (int i = 0; i < num_points; i++) {
             feature_values[i] = points[i].features[f];
         }
-        
-        // Simple bubble sort for small arrays
+
         for (int i = 0; i < num_points - 1; i++) {
             for (int j = 0; j < num_points - i - 1; j++) {
                 if (feature_values[j] > feature_values[j + 1]) {
@@ -157,11 +155,11 @@ void find_best_split(data_point *points, int num_points,
                 }
             }
         }
-        
-        // Try thresholds between different values
+
         for (int i = 0; i < num_points - 1; i++) {
-            if (feature_values[i] == feature_values[i + 1]) continue;
-            
+            if (feature_values[i] == feature_values[i + 1]) {
+                continue;
+            }
             __u32 threshold = (feature_values[i] + feature_values[i + 1]) / 2;
             
             // Count samples on each side
@@ -202,9 +200,11 @@ void find_best_split(data_point *points, int num_points,
                 *best_threshold = threshold;
             }
         }
+        free(feature_values);
     }
 }
 
+/*==================== Build Tree ====================*/
 int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int node_idx) {
     if (node_idx >= MAX_NODE_PER_TREE || tree->node_count >= MAX_NODE_PER_TREE) 
         return -1;
@@ -212,7 +212,6 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
     Node *node = &tree->nodes[node_idx];
     tree->node_count = (node_idx + 1 > tree->node_count) ? node_idx + 1 : tree->node_count;
 
-    // Check for leaf conditions
     int label0_count = 0, label1_count = 0;
     for (int i = 0; i < n; i++) {
         if (points[i].label == 0) label0_count++;
@@ -222,11 +221,12 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
     // Create leaf node
     if (label0_count == 0 || label1_count == 0 || 
         depth >= tree->max_depth || n < tree->min_samples_split) {
-        node->is_leaf = 1;
-        node->split_value = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
-        node->feature_idx = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->feature_idx   = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
@@ -237,18 +237,18 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
 
     if (best_feature == -1) {
         // No good split found, create leaf
-        node->is_leaf = 1;
-        node->split_value = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
-        node->feature_idx = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->feature_idx   = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
-    // Create internal node
-    node->is_leaf = 0;
+    node->is_leaf     = 0;
     node->feature_idx = best_feature;
-    node->split_value = (__s32)best_threshold;
+    node->split_value = best_threshold;
 
     // Split data
     int left_count = 0, right_count = 0;
@@ -259,10 +259,11 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
 
     if (left_count == 0 || right_count == 0) {
         // Failed split, create leaf
-        node->is_leaf = 1;
-        node->split_value = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
@@ -284,7 +285,7 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
         }
     }
 
-    int left_node_idx = tree->node_count; /* next free index */
+    int left_node_idx = tree->node_count; 
     if (left_node_idx >= MAX_NODE_PER_TREE) { free(left); free(right); return -1; }
 
     int left_ret = build_tree(tree, left, left_count, depth + 1, left_node_idx);
@@ -314,19 +315,21 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
     return node_idx;
 }
 
+/*==================== Train Decision Tree ====================*/
 void train_decision_tree(DecisionTree *tree, data_point *dataset, int num_points, 
                         int max_depth, int min_samples_split) {
     tree->node_count = 0;
     tree->max_depth = max_depth;
     tree->min_samples_split = min_samples_split;
     
-    // Initialize all nodes
+    // Initialize only used nodes area (safe)
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
-        tree->nodes[i].is_leaf = 1;
-        tree->nodes[i].left_idx = -1;
-        tree->nodes[i].right_idx = -1;
-        tree->nodes[i].feature_idx = -1;
-        tree->nodes[i].split_value = 0;
+        tree->nodes[i].is_leaf      = 1;
+        tree->nodes[i].left_idx     = -1;
+        tree->nodes[i].right_idx    = -1;
+        tree->nodes[i].feature_idx  = -1;
+        tree->nodes[i].split_value  = 0;
+        tree->nodes[i].label        = 0;
     }
     
     build_tree(tree, dataset, num_points, 0, 0);
@@ -367,7 +370,85 @@ void train_random_forest(RandomForest *rf, data_point *dataset, int num_points,
     }
 }
 
-/*==================== Map Operations ====================*/
+void reindex_tree(DecisionTree *tree) {
+    if (!tree) return;
+    if (tree->node_count <= 1) return; // nothing to do
+
+    int old_to_new[MAX_NODE_PER_TREE];
+    for (int i = 0; i < MAX_NODE_PER_TREE; i++)
+        old_to_new[i] = -1;
+
+    Node *new_nodes = calloc(MAX_NODE_PER_TREE, sizeof(Node));
+    if (!new_nodes) return;
+
+    int queue[MAX_NODE_PER_TREE];
+    int qh = 0, qt = 0;
+    // assume root is at local index 0
+    queue[qt++] = 0;
+    old_to_new[0] = 0;
+    int new_count = 0; // index of last assigned node in new_nodes
+
+    while (qh < qt) {
+        int old_idx = queue[qh++];
+        int new_idx = old_to_new[old_idx];
+        Node *old_node = &tree->nodes[old_idx];
+        Node *nnode = &new_nodes[new_idx];
+
+        // copy node content
+        *nnode = *old_node;
+
+        // process left child (if valid local index)
+        if (old_node->left_idx >= 0) {
+            int child_old = old_node->left_idx;
+            if (child_old < 0 || child_old >= MAX_NODE_PER_TREE) {
+                nnode->left_idx = -1;
+            } else {
+                if (old_to_new[child_old] == -1) {
+                    new_count++;
+                    old_to_new[child_old] = new_count;
+                    queue[qt++] = child_old;
+                }
+                nnode->left_idx = old_to_new[child_old];
+            }
+        } else {
+            nnode->left_idx = -1;
+        }
+
+        // process right child
+        if (old_node->right_idx >= 0) {
+            int child_old = old_node->right_idx;
+            if (child_old < 0 || child_old >= MAX_NODE_PER_TREE) {
+                nnode->right_idx = -1;
+            } else {
+                if (old_to_new[child_old] == -1) {
+                    new_count++;
+                    old_to_new[child_old] = new_count;
+                    queue[qt++] = child_old;
+                }
+                nnode->right_idx = old_to_new[child_old];
+            }
+        } else {
+            nnode->right_idx = -1;
+        }
+    }
+
+    // copy back new_nodes into tree->nodes (only up to new_count+1)
+    int final_count = new_count + 1;
+    for (int i = 0; i < final_count; i++) {
+        tree->nodes[i] = new_nodes[i];
+    }
+    // clear remaining nodes (optional)
+    for (int i = final_count; i < MAX_NODE_PER_TREE; i++) {
+        tree->nodes[i].is_leaf = 1;
+        tree->nodes[i].left_idx = -1;
+        tree->nodes[i].right_idx = -1;
+        tree->nodes[i].feature_idx = -1;
+        tree->nodes[i].split_value = 0;
+    }
+    tree->node_count = final_count;
+    free(new_nodes);
+}
+
 int save_forest_to_map(int map_fd, RandomForest *rf) {
     if (!rf) return -1;
 
@@ -377,12 +458,36 @@ int save_forest_to_map(int map_fd, RandomForest *rf) {
     for (__u32 t = 0; t < rf->n_trees && t < MAX_TREES; t++) {
         DecisionTree *tree = &rf->trees[t];
 
+        reindex_tree(tree);
+
         for (int n = 0; n < tree->node_count && n < MAX_NODE_PER_TREE; n++) {
             __u32 key = t * MAX_NODE_PER_TREE + n;
-            Node *node = &tree->nodes[n];
+            Node tmp = tree->nodes[n];  /* local copy */
 
-            if (bpf_map_update_elem(map_fd, &key, node, BPF_ANY) < 0) {
-                fprintf(stderr, "[ERROR] Failed to update node %u: %s\n", key, strerror(errno));
+            /* Convert child indices from local -> global */
+            if (tmp.left_idx >= 0) {
+                /* sanity check */
+                if (tmp.left_idx >= tree->node_count) {
+                    fprintf(stderr, "[WARN] Tree %u local left_idx %d out of range (node_count=%d). Setting -1\n",
+                            t, tmp.left_idx, tree->node_count);
+                    tmp.left_idx = -1;
+                } else {
+                    tmp.left_idx = (__s32)(t * MAX_NODE_PER_TREE + tmp.left_idx);
+                }
+            }
+            if (tmp.right_idx >= 0) {
+                if (tmp.right_idx >= tree->node_count) {
+                    fprintf(stderr, "[WARN] Tree %u local right_idx %d out of range (node_count=%d). Setting -1\n",
+                            t, tmp.right_idx, tree->node_count);
+                    tmp.right_idx = -1;
+                } else {
+                    tmp.right_idx = (__s32)(t * MAX_NODE_PER_TREE + tmp.right_idx);
+                }
+            }
+
+            if (bpf_map_update_elem(map_fd, &key, &tmp, BPF_ANY) < 0) {
+                fprintf(stderr, "[ERROR] Failed to update node %u (tree=%u local=%d): %s\n",
+                        key, t, n, strerror(errno));
                 return -1;
             }
             total_nodes++;
@@ -402,7 +507,7 @@ int predict_tree_userspace(const DecisionTree *tree, const data_point *dp) {
         if (idx < 0 || idx >= tree->node_count) return 0;
         
         const Node *node = &tree->nodes[idx];
-        if (node->is_leaf) return node->split_value;
+        if (node->is_leaf) return node->label;
         
         if (node->feature_idx < 0 || node->feature_idx >= MAX_FEATURES) return 0;
         
@@ -445,7 +550,7 @@ void test_forest_accuracy(RandomForest *rf, data_point *test_data, int test_coun
     }
     
     printf("[INFO] Accuracy: %d/%d = %.2f%%\n", correct, total, 
-           (double)correct / total * 100.0);
+           (total > 0) ? (double)correct / total * 100.0 : 0.0);
 }
 
 /*==================== MAIN ====================*/
@@ -512,7 +617,7 @@ int main(int argc, char **argv) {
     train_random_forest(&rf, train_dataset, train_count, &params);
     printf("[INFO] RandomForest trained with %u trees\n", rf.n_trees);
 
-    // Save to BPF maps
+    // Save to BPF maps (reindex each tree locally before saving)
     if (save_forest_to_map(map_fd_nodes, &rf) != 0) {
         fprintf(stderr, "[ERROR] Failed to update xdp_randforest_nodes\n");
         return EXIT_FAILURE;

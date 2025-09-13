@@ -21,13 +21,14 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* ================= CSV PRINT ================= */
 static void print_node_csv(FILE *f, __u32 key, const Node *node) {
-    fprintf(f, "%u,%d,%d,%d,%d,%d,%d\n",
+    fprintf(f, "%u,%d,%d,%d,%d,%d,%d,%d\n",
             key,
             node->left_idx,
             node->right_idx,
             node->feature_idx,
             node->split_value,
             node->is_leaf,
+            node->label,
             0);
 }
 
@@ -108,7 +109,7 @@ int main(int argc, char **argv) {
     }
 
     /* Header CSV */
-    fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Reserved\n");
+    fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Label,Reserved\n");
     fprintf(f_flows, "SrcIP,SrcPort,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
 
     dump_nodes_to_csv(map_fd_nodes, f_nodes);

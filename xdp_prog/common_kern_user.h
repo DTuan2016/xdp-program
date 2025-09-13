@@ -9,7 +9,7 @@
 /*Config numbers of total data_points to training*/
 #define TRAINING_SET         3200
 /*Config numbers of flow to save to map xdp_flow_tracking or flow_dropped*/
-#define MAX_FLOW_SAVED       200
+#define MAX_FLOW_SAVED       300
 /*Config random forest*/
 #define MAX_TREES            50
 #define MAX_NODE_PER_TREE    256
@@ -27,13 +27,13 @@ struct flow_key {
     __u16 padding;
 } __attribute__((packed));
 typedef struct {
-    __u64 start_ts;             /* Timestamp of first packet */
-    __u64 last_seen;            /* Timestamp of last packet */
+    __u32 start_ts;             /* Timestamp of first packet */
+    __u32 last_seen;            /* Timestamp of last packet */
     __u32 total_pkts;           /* Total packet count (Paccket/s)*/
     __u32 total_bytes;          /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;              /* Sum of Inter-Arrival Times */
     /* Feature use for algorithm */
-    __u64 flow_duration;        /* Duration of a flow */
+    __u32 flow_duration;        /* Duration of a flow */
     __u32 flow_IAT_mean;        /* Mean Inter-Arrival Time */
     __u32 flow_pkts_per_s;
     __u32 flow_bytes_per_s;
@@ -45,9 +45,10 @@ typedef struct {
 typedef struct Node{
     int left_idx;
     int right_idx;
-    int split_value;
+    __u32 split_value;
     int feature_idx;
-    int is_leaf;
+    __u32 is_leaf;
+    __u32 label;
 } Node;
 typedef struct DecisionTree{
     Node        nodes[MAX_NODE_PER_TREE];
