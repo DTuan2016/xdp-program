@@ -6,11 +6,11 @@
 
 #include <stdint.h>
 /* KNN, Threshold have max accuracy */
-#define KNN             6
+#define KNN             4
 #define DIST_THRESHOLD  15
 /* Change benign set */
-#define MAX_FLOW_SAVED  1000
-#define WARM_UP_FOR_KNN 900
+#define MAX_FLOW_SAVED  200
+#define WARM_UP_FOR_KNN 100
 // 150  // 200  //
 // 1397 // 1840 //
 
