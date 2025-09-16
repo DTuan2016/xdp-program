@@ -109,6 +109,70 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
     return count;
 }
 
+int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
+    FILE *f = fopen(filename, "r");
+    if (!f) {
+        fprintf(stderr, "[ERROR] Cannot open file: %s\n", filename);
+        return -1;
+    }
+
+    char line[1024];
+    int count = 0;
+
+    /* Skip header */
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), f) && count < max_rows) {
+        data_point dp = {0};
+        int src_port;
+        char src_ip[64];
+        double feature0, feature1, feature2, feature3, feature4;
+        int label;
+        
+        int n = sscanf(line,
+                       "%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%d",
+                        src_ip, &src_port,
+                       &feature0, &feature1, &feature2,
+                       &feature3, &feature4, &label);
+
+        if (n != 8) continue;
+
+        // Calculate features correctly
+        // double total_length = len_fwd_pkts + len_bwd_pkts;
+        
+        // dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds (assumption)
+        // dp.total_bytes      = (__u64)total_length;
+        // dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds (assumption)
+        // dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
+        
+        // // Calculate per-second rates
+        // dp.flow_pkts_per_s  = flow_pkts_per_s;
+        // dp.flow_bytes_per_s = flow_bytes_per_s;
+
+        /* Copy to dp.features[] - order must match kernel */
+        dp.features[0] = feature0;
+        dp.features[1] = feature1;
+        dp.features[2] = feature2;
+        dp.features[3] = feature3;
+        dp.features[4] = feature4;
+        
+        dp.label = label;
+        dataset[count++] = dp;
+
+        if (count <= 5) { // Print first few for debugging
+            printf("Sample %d: duration=%u, pkts/s=%u, mean_len=%u, IAT=%u, bytes/s=%u, label=%d\n",
+                   count, dp.features[0], dp.features[1], dp.features[2], 
+                   dp.features[3], dp.features[4], dp.label);
+        }
+    }
+    fclose(f);
+    return count;
+}
+
+
 double c_factor(int n) {
     if (n <= 1) return 0.0;
     return 2.0 * (log((double)n - 1.0) + 0.5772156649) - 2.0*(n-1.0)/n;
@@ -437,7 +501,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset("/home/dongtv/dtuan/training_isolation/processed/train_portmap_data.csv",
+    int train_count = read_csv_dataset1("/home/dongtv/dtuan/xdp_flow_tracking_fixed.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
