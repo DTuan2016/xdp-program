@@ -102,6 +102,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     } else {
         key->src_port = 0;
     }
+    key->src_port = bpf_ntohs(key->src_port);
 
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;

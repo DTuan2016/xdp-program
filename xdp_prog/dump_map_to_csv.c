@@ -112,13 +112,13 @@ int main(int argc, char **argv)
     }
 
     FILE *f1 = fopen("isoforest_nodes.csv", "w");
-    FILE *f2 = fopen("xdp_flow_tracking.csv", "w");
+    FILE *f2 = fopen("isoforest_125trees.csv", "w");
     if (!f1 || !f2) {
         perror("fopen");
         return EXIT_FAILURE;
     }
 
-    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,Size,IsLeaf\n");
+    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,IsLeaf\n");
     fprintf(f2, "SrcIP,SrcPort,feature1,feature2,feature3,feature4,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);

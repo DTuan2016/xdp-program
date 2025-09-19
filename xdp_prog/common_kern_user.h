@@ -6,17 +6,18 @@
 
 #include <stdint.h>
 #include <math.h>
+/*All of this defines have max accuracy ~93%*/ 
 #define SCALE               1000
 #define TRAINING_SET        3200
-#define MAX_FLOW_SAVED      1000
+#define MAX_FLOW_SAVED      500
 #define MAX_FEATURES        5
-#define MAX_TREES           100
+#define MAX_TREES           125
 #define MAX_NODE_PER_TREE   128
 #define MAX_SAMPLE_PER_NODE 256
 #define NULL_IDX            -1
 #define MAX_TEST            300
 #define MAX_DEPTH           8
-#define CONTAMINATION       10
+#define CONTAMINATION       179
 
 /* Flow identification key */
 struct flow_key {
