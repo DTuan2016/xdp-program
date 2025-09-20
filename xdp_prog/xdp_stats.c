@@ -672,7 +672,7 @@ int main(int argc, char **argv) {
         .n_trees = MAX_TREES,
         .max_depth = MAX_TREE_DEPTH, // Reasonable depth
         .sample_size = (train_count > MAX_SAMPLES_PER_NODE) ? MAX_SAMPLES_PER_NODE : train_count,
-        .min_samples_split = 2
+        .min_samples_split = MIN_SPLIT_SAMPLES
     };
 
     // Train RandomForest

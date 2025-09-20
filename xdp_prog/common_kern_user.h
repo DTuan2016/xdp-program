@@ -13,7 +13,8 @@
 /*Config random forest*/
 #define MAX_TREES            50
 #define MAX_NODE_PER_TREE    256
-#define MAX_SAMPLES_PER_NODE 100
+#define MAX_SAMPLES_PER_NODE 256
+#define MIN_SPLIT_SAMPLES    4
 /*log2(TRAINING SET)*/     
 #define MAX_TREE_DEPTH       8
 /*Don't configure here*/
