@@ -17,7 +17,7 @@
 
 /* ==================== MAP DEFINITIONS ==================== */
 struct {
-    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
@@ -357,15 +357,18 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
             data_point local_dp = {};
             __builtin_memcpy(&local_dp, dp, sizeof(data_point));
             bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
-            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
+            bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
             return XDP_PASS;
         } else {
             dp->is_normal = 1;
+            data_point local_dp = {};
+            __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+            bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
         }
     } else {
         dp->is_normal = 1; /* Warm-up coi là normal */
     }
-
+    // bpf_map_update_elem(&xdp_flow_tracking, &key, &dp, BPF_ANY);
     return XDP_PASS;
 }
 
