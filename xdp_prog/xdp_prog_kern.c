@@ -213,11 +213,11 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     __u8 dz = (__u8)ilog2_u64(fz);
     __u8 dw = (__u8)ilog2_u64(fw);
     __u8 dh = (__u8)ilog2_u64(fh);
-    bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu fh=%llu | dx=%u dy=%u dz=%u dw=%u dh=%u\n",
-               fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
+    // bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu fh=%llu | dx=%u dy=%u dz=%u dw=%u dh=%u\n",
+    //            fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw + dh*dh;
     __u16 res = bpf_sqrt(sum);
-    bpf_printk("DIST sqrt=%u\n", res);
+    // bpf_printk("DIST sqrt=%u\n", res);
     return res;
 }
 
@@ -385,10 +385,10 @@ static __always_inline void compute_anomaly_for_target(const struct flow_key *ke
 
     if (target->lof_value > threshold) {
         target->is_normal = 0;   // Bất thường
-        bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
-                   target->lof_value, threshold);
+        // bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
+        //            target->lof_value, threshold);
         bpf_map_update_elem(&flow_dropped, key, target, BPF_ANY);
-        bpf_map_delete_elem(&xdp_flow_tracking, key);
+        // bpf_map_delete_elem(&xdp_flow_tracking, key);
     } else {
         target->is_normal = 1;   // Bình thường
     }
@@ -412,7 +412,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
 
     if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
-        bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
+        // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
         return XDP_PASS;
     }
 

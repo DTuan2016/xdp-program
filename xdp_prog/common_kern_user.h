@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <math.h>
-#define KNN                 2
+#define KNN                 3
 #define SCALEEEEEE          1000
 #define DATA_CAL_LOF        100
 #define MAX_FLOW_SAVED      200
