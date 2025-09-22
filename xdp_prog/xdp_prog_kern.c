@@ -155,11 +155,11 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     __u8 dz = (__u8)ilog2_u64(fz);
     __u8 dw = (__u8)ilog2_u64(fw);
     __u8 dh = (__u8)ilog2_u64(fh);
-    bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu fh=%llu | dx=%u dy=%u dz=%u dw=%u dh=%u\n",
-               fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
+    // bpf_printk("DIST: fx=%llu fy=%llu fz=%llu fw=%llu fh=%llu | dx=%u dy=%u dz=%u dw=%u dh=%u\n",
+    //            fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw + dh*dh;
     __u16 res = bpf_sqrt(sum);
-    bpf_printk("DIST sqrt=%u\n", res);
+    // bpf_printk("DIST sqrt=%u\n", res);
     return res;
 }
 
@@ -334,7 +334,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
     if (ret == -2) {
-        bpf_printk("DROP LLDP frame\n");
+        // bpf_printk("DROP LLDP frame\n");
         return XDP_DROP;  /* drop luôn */
     }
 
@@ -342,7 +342,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
 
     if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
-        bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
+        // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
         return XDP_PASS;
     }
     /* Cập nhật stats và lấy con trỏ dp (lookup 1 lần) */
@@ -357,12 +357,12 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         int anomaly = detect_anomaly(&key, dp);
         if (anomaly) {
             dp->is_normal = 0;
-            bpf_printk("ANOMALY DETECTED %d:%d", key.src_ip, key.src_port);
+            // bpf_printk("ANOMALY DETECTED %d:%d", key.src_ip, key.src_port);
             data_point local_dp = {};
             __builtin_memcpy(&local_dp, dp, sizeof(data_point));
             bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
-            // bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
-            bpf_map_delete_elem(&xdp_flow_tracking, &key);
+            bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
+            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
             return XDP_PASS;
         } else {
             dp->is_normal = 1;
