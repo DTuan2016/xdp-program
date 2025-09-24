@@ -6,10 +6,10 @@
 
 #include <stdint.h>
 #include <math.h>
-#define KNN                 3
+#define KNN                 2
 #define SCALEEEEEE          1000
 #define DATA_CAL_LOF        100
-#define MAX_FLOW_SAVED      200
+#define MAX_FLOW_SAVED      400
 #define LOF_THRESHOLD       1.3 // Threshold accuracy cao nhất
 typedef int32_t fixed;
 

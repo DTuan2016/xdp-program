@@ -411,10 +411,10 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (ret < 0)
         return XDP_PASS;
 
-    if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
-        // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
-        return XDP_PASS;
-    }
+    // if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
+    //     // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
+    //     return XDP_PASS;
+    // }
 
     data_point *target = update_stats(&key, ctx, 1);
     if (!target)
