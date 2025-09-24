@@ -9,9 +9,10 @@
 /*Config numbers of total data_points to training*/
 #define TRAINING_SET         3200
 /*Config numbers of flow to save to map xdp_flow_tracking or flow_dropped*/
-#define MAX_FLOW_SAVED       300
+#define MAX_FLOW_SAVED       500
 /*Config random forest*/
-#define MAX_TREES            50
+/*MAX 60 trees with max_node = 256*/
+#define MAX_TREES            30
 #define MAX_NODE_PER_TREE    256
 #define MAX_SAMPLES_PER_NODE 256
 #define MIN_SPLIT_SAMPLES    4
