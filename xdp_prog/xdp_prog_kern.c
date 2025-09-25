@@ -242,7 +242,7 @@ static __always_inline int is_anomaly(data_point *dp)
         total_depth += compute_path_length(dp, t);
 
     __u32 avg_depth = ((__u32)total_depth * SCALE) / n_trees;
-    bpf_printk("AVG_DEPTH:%d", avg_depth);
+    // bpf_printk("AVG_DEPTH:%d", avg_depth);
     return (avg_depth < params->threshold) ? 1 : 0;
 }
 
