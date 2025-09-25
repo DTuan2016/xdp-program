@@ -79,7 +79,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    map_fd = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
+    map_fd = open_bpf_map_file(pin_dir, "flow_dropped", &info);
     if (map_fd < 0) {
         fprintf(stderr, "ERR: cannot open map\n");
         return EXIT_FAILURE;

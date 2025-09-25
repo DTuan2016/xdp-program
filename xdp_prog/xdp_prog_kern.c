@@ -28,7 +28,7 @@ struct{
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct flow_key);
     __type(value, data_point);
-    __uint(max_entries, MAX_FLOW_SAVED);
+    __uint(max_entries, MAX_TEST);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_dropped SEC(".maps");
 
@@ -333,19 +333,13 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __u64 pkt_len = 0;
 
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
-    if (ret == -2) {
-        // bpf_printk("DROP LLDP frame\n");
-        return XDP_DROP;  /* drop luôn */
-    }
+    if (ret == -2)
+        return XDP_DROP;  /* drop LLDP */
 
     if (ret < 0)
         return XDP_PASS;
 
-    // if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
-    //     // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
-    //     return XDP_PASS;
-    // }
-    /* Cập nhật stats và lấy con trỏ dp (lookup 1 lần) */
+    /* Cập nhật stats */
     data_point *dp = update_stats(&key, ctx);
     if (!dp)
         return XDP_PASS;
@@ -355,26 +349,26 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __u32 *count = bpf_map_lookup_elem(&flow_counter, &idx);
     if (count && *count > WARM_UP_FOR_KNN) {
         int anomaly = detect_anomaly(&key, dp);
+        data_point local_dp = {};
+        __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+
         if (anomaly) {
-            dp->is_normal = 0;
-            // bpf_printk("ANOMALY DETECTED %d:%d", key.src_ip, key.src_port);
-            data_point local_dp = {};
-            __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+            local_dp.is_normal = 0;
+
+            /* anomaly -> lưu vào flow_dropped */
             bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
             bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
-            // bpf_map_delete_elem(&xdp_flow_tracking, &key);
-            return XDP_PASS;
         } else {
-            dp->is_normal = 1;
-            data_point local_dp = {};
-            __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+            local_dp.is_normal = 1;
             bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
         }
     } else {
-        dp->is_normal = 1; /* Warm-up coi là normal */
+        /* warm-up coi như normal */
+        dp->is_normal = 1;
+        data_point local_dp = {};
+        __builtin_memcpy(&local_dp, dp, sizeof(data_point));
+        bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
     }
-    // bpf_map_update_elem(&xdp_flow_tracking, &key, &dp, BPF_ANY);
+
     return XDP_PASS;
 }
-
-char _license[] SEC("license") = "GPL";
