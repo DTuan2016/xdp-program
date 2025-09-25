@@ -177,12 +177,12 @@ static __always_inline int predict_one_tree(__u32 root_idx, const data_point *dp
         if (!node)
             return 0;
 
-        bpf_printk("TreeWalk: depth=%d node_idx=%u feat=%d split=%d is_leaf=%d\n",
-                   depth, node_idx, node->feature_idx, node->split_value, node->is_leaf);
+        // bpf_printk("TreeWalk: depth=%d node_idx=%u feat=%d split=%d is_leaf=%d\n",
+        //            depth, node_idx, node->feature_idx, node->split_value, node->is_leaf);
 
         if (node->is_leaf) {
-            bpf_printk("Leaf reached: node_idx=%u label=%d\n", node_idx,
-                       node->label);
+            // bpf_printk("Leaf reached: node_idx=%u label=%d\n", node_idx,
+            //            node->label);
             return node->label;
         }
 
