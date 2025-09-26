@@ -501,7 +501,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset1("/home/dongtv/dtuan/xdp_flow_tracking_fixed.csv",
+    int train_count = read_csv_dataset1("/home/dongtv/dtuan/metric_results/balanced_dataset.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
