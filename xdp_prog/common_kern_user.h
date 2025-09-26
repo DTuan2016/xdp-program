@@ -9,7 +9,7 @@
 #define KNN             2
 #define DIST_THRESHOLD  12
 /* Change benign set */
-#define MAX_FLOW_SAVED  800
+#define MAX_FLOW_SAVED  1000
 #define WARM_UP_FOR_KNN 100
 // #define MAX_TEST        1000
 // 150  // 200  //
