@@ -9,8 +9,9 @@
 #define KNN             2
 #define DIST_THRESHOLD  12
 /* Change benign set */
-#define MAX_FLOW_SAVED  1000
-#define WARM_UP_FOR_KNN 100
+#define MAX_FLOW_SAVED  10000
+#define WARM_UP_FOR_KNN 1000
+#define MAX_FEATURE     5
 // #define MAX_TEST        1000
 // 150  // 200  //
 // 1397 // 1840 //
@@ -24,16 +25,6 @@ struct flow_key {
     __u16 padding;  
 } __attribute__((packed));
 
-struct knn_entry {
-    struct flow_key key;
-    __u16 distance;
-};
-
-struct knn_entries{
-    struct knn_entry knn[KNN];
-};
-/* Flow statistics and anomaly detection data */
-
 typedef struct {
     /* Timing information */
     __u64 start_ts;             /* Timestamp of first packet */
@@ -46,16 +37,8 @@ typedef struct {
     __u32 flow_pkts_per_s;
     __u32 flow_bytes_per_s;
     __u32 pkts_len_mean;
-    struct knn_entries neighbors;
-    __u32 is_normal;            /*1 = normally, 0 = anomaly*/
+    __u32 features[MAX_FEATURE];
 } data_point;
-
-/* Context để truyền cho callback */
-// struct knn_callback_ctx {
-//     const struct flow_key *target_key;
-//     data_point *target_dp;
-//     struct knn_entries *entries;
-// };
 
 /* XDP action definitions for compatibility */
 #ifndef XDP_ACTION_MAX

@@ -30,11 +30,11 @@ static void print_flow_key_csv(FILE *f, struct flow_key *key) {
 /* In ra data_point dưới dạng CSV */
 static void print_data_point_csv(FILE *f, data_point *dp) {
     fprintf(f, ",%llu,%u,%u,%u,%u",
-           dp->last_seen - dp->start_ts,
-           dp->total_pkts,
-           dp->total_bytes,
+           dp->flow_duration,
+           dp->flow_bytes_per_s,
+           dp->flow_pkts_per_s,
            dp->flow_IAT_mean,
-           dp->is_normal);
+           dp->pkts_len_mean);
 }
 
 /* Dump toàn bộ map -> file CSV */
@@ -91,7 +91,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    fprintf(f, "STT,SrcIP,SrcPort,FlowDur(ns),TotalPkts,TotalBytes,MeanIAT(ns),Normal\n");
+    fprintf(f, "STT,SrcIP,SrcPort,FlowDur(ns),flow_bytes_per_sec,flow_pkts_per_sec,MeanIAT(ns),pkts_len_mean\n");
 
     dump_map_to_csv(map_fd, f);
 

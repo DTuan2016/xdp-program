@@ -46,11 +46,11 @@ static void print_flow_key(struct flow_key *key) {
 
 static void print_data_point(data_point *dp) {
     printf("%-12llu | %-12u | %-12u | %-12u | %-12u |\n",
-           dp->last_seen - dp->start_ts,
-           dp->total_pkts,
-           dp->total_bytes,
-           dp->flow_IAT_mean,
-           dp->is_normal);
+           dp->flow_duration,
+           dp->flow_bytes_per_s,
+           dp->flow_pkts_per_s,
+           dp->pkts_len_mean,
+           dp->flow_IAT_mean);
 }
 
 int main(int argc, char **argv)
@@ -94,8 +94,8 @@ int main(int argc, char **argv)
         printf("\n=== Flow Table ===\n");
         printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s |\n",
                "STT", "SrcIP:Port",
-               "FlowDur(ns)", "TotalPkts", "TotalBytes", "MeanIAT(ns)",
-                "normal?");
+               "FlowDur(ns)", "flow_bytes_per_second", "flow_pkts_per_second", "MeanIAT(ns)",
+                "pkts_len_mean");
 
         memset(&key, 0, sizeof(key));
 
