@@ -24,16 +24,19 @@ const char *pin_basedir = "/sys/fs/bpf";
 static void print_flow_key_csv(FILE *f, struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    fprintf(f, "%s,%u", src_ip, ntohs(key->src_port));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    fprintf(f, "%s,%u -> %s:%u proto=%d", src_ip, key->src_port, dst_ip, key->src_port, key->proto);
 }
 
 /* In ra data_point dưới dạng CSV */
 static void print_data_point_csv(FILE *f, data_point *dp) {
-    fprintf(f, ",%llu,%u,%u,%u,%u",
-           dp->last_seen - dp->start_ts,
-           dp->total_pkts,
-           dp->total_bytes,
+    fprintf(f, ",%llu,%u,%u,%u,%u,%u",
+           dp->flow_duration,
+           dp->flow_pkts_per_s,
+           dp->flow_bytes_per_s,
            dp->flow_IAT_mean,
+           dp->pkts_len_mean,
            dp->is_normal);
 }
 
@@ -91,7 +94,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    fprintf(f, "STT,SrcIP,SrcPort,FlowDur(ns),TotalPkts,TotalBytes,MeanIAT(ns),Normal\n");
+    fprintf(f, "STT,SrcIP,SrcPort,DestIP,DestPort,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktsLenMean,Normal\n");
 
     dump_map_to_csv(map_fd, f);
 
