@@ -41,15 +41,18 @@ const char *pin_basedir = "/sys/fs/bpf";
 static void print_flow_key(struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    printf("%s:%u", src_ip, ntohs(key->src_port));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    printf("%s:%u->%s:%u proto=%d", src_ip, key->src_port, dst_ip, key->dst_port, key->proto);
 }
 
 static void print_data_point(data_point *dp) {
-    printf("%-12llu | %-12u | %-12u | %-12u | %-12u |\n",
-           dp->last_seen - dp->start_ts,
-           dp->total_pkts,
-           dp->total_bytes,
+    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u |\n",
+           dp->flow_duration,
+           dp->flow_pkts_per_s,
+           dp->flow_bytes_per_s,
            dp->flow_IAT_mean,
+           dp->pkts_len_mean,
            dp->is_normal);
 }
 
@@ -92,9 +95,9 @@ int main(int argc, char **argv)
     while (1) {
         int stt = 1;
         printf("\n=== Flow Table ===\n");
-        printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s |\n",
-               "STT", "SrcIP:Port",
-               "FlowDur(ns)", "TotalPkts", "TotalBytes", "MeanIAT(ns)",
+        printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s |\n",
+               "STT", "SrcIP:Port -> DstIP:DstPort, proto",
+               "FlowDuration", "FlowPktsPerSec", "FlowBytesPerSec", "FlowIATMean", "PktsLenMean",
                 "normal?");
 
         memset(&key, 0, sizeof(key));
