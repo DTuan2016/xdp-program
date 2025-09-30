@@ -24,7 +24,9 @@ const char *pin_basedir = "/sys/fs/bpf";
 static void print_flow_key_csv(FILE *f, struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    fprintf(f, "%s,%u", src_ip, ntohs(key->src_port));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    fprintf(f, "%s,%u -> %s:%u proto=%d", src_ip, key->src_port, dst_ip, key->src_port, key->proto);
 }
 
 /* In ra data_point dưới dạng CSV */
