@@ -40,9 +40,15 @@ static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
     struct in_addr addr;
     addr.s_addr = key->src_ip; // network order
     inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+    char ip_dest[INET_ADDRSTRLEN];
+    struct in_addr addr1;
+    addr1.s_addr = key->dst_ip; // network order
+    inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%d\n",
         ip_str,
+        key->src_port,
+        ip_dest,
         key->src_port,
         dp->features[0],
         dp->features[1],

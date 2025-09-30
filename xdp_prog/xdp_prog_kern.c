@@ -76,9 +76,10 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
         return -1;
-
-    if (eth->h_proto == bpf_htons(0x88cc))
-        return -2; // drop LLDP
+    /* Nếu là LLDP (EtherType = 0x88CC) thì drop */
+    if (eth->h_proto == bpf_htons(0x88CC)) {
+        return -2;  /* giá trị đặc biệt để main biết drop */
+    }
 
     if (eth->h_proto != bpf_htons(ETH_P_IP))
         return -1;
@@ -88,23 +89,29 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         return -1;
 
     key->src_ip = iph->saddr;
-
+    key->dst_ip = iph->daddr;
+    key->proto  = iph->protocol;
+    // __u16 src_port = 0;
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
             return -1;
         key->src_port = tcph->source;
+        key->dst_port = tcph->dest;
     } else if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(udph + 1) > data_end)
             return -1;
         key->src_port = udph->source;
+        key->dst_port = udph->dest;
     } else {
         key->src_port = 0;
     }
-    key->src_port = bpf_ntohs(key->src_port);
 
+    key->src_port = bpf_ntohs(key->src_port);
+    key->dst_port = bpf_ntohs(key->dst_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
+
     return 0;
 }
 
