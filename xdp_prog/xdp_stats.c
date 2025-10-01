@@ -117,31 +117,19 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
 
     while (fgets(line, sizeof(line), f) && count < max_rows) {
         data_point dp = {0};
-        int src_port;
+        int src_port, dst_port;
         char src_ip[64];
+        char dst_ip[64];
         double feature0, feature1, feature2, feature3, feature4;
         int label;
         
         int n = sscanf(line,
-                       "%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%d",
-                        src_ip, &src_port,
+                       "%63[^,],%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%d",
+                        src_ip, &src_port, dst_ip, &dst_port,
                        &feature0, &feature1, &feature2,
                        &feature3, &feature4, &label);
 
-        if (n != 8) continue;
-
-        // Calculate features correctly
-        // double total_length = len_fwd_pkts + len_bwd_pkts;
-        
-        // dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds (assumption)
-        // dp.total_bytes      = (__u64)total_length;
-        // dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds (assumption)
-        // dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
-        
-        // // Calculate per-second rates
-        // dp.flow_pkts_per_s  = flow_pkts_per_s;
-        // dp.flow_bytes_per_s = flow_bytes_per_s;
-
+        if (n != 10) continue;
         /* Copy to dp.features[] - order must match kernel */
         dp.features[0] = feature0;
         dp.features[1] = feature1;
