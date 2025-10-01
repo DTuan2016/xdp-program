@@ -40,6 +40,7 @@ typedef struct {
     __u32 flow_bytes_per_s;
     __u32 pkts_len_mean;
     __u32 features[MAX_FEATURE];
+    __u32 label;
 } data_point;
 
 /* XDP action definitions for compatibility */

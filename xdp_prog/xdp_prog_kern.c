@@ -94,6 +94,7 @@ static __always_inline data_point *update_stats(struct flow_key *key, struct xdp
         zero.flow_bytes_per_s   = 0;
         zero.flow_pkts_per_s    = 0;
         zero.pkts_len_mean      = 0;
+        zero.label              = 0;
 
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
