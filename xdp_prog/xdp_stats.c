@@ -43,15 +43,18 @@ const char *pin_basedir = "/sys/fs/bpf";
 static void print_flow_key(struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    printf("%s:%u", src_ip, ntohs(key->src_port));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    printf("%s:%u->%s:%u proto=%d", src_ip, key->src_port, dst_ip, key->dst_port, key->proto);
 }
 
 static void print_data_point(data_point *dp) {
-    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12f | %-12f\n",
-           dp->last_seen - dp->start_ts,
-           dp->total_pkts,
-           dp->total_bytes,
+    printf("%-12llu | %-12u | %-12u | %-12u | %-12u | %-12u | %-12u | %-12f | %-12f\n",
+           dp->flow_duration,
+           dp->flow_pkts_per_s,
+           dp->flow_bytes_per_s,
            dp->flow_IAT_mean,
+           dp->pkts_len_mean,
            dp->k_distance,
            dp->reach_dist[0], // demo: in 1 reach_dist
            (float)dp->lrd_value / SCALEEEEEE,
@@ -242,9 +245,9 @@ int main(int argc, char **argv)
             calculate_lof_for_data(flows, keys, flow_count);
 
             printf("\n=== Flow Table with LOF ===\n");
-            printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s\n",
-                   "STT", "SrcIP:Port",
-                   "FlowDur(ns)", "TotalPkts", "TotalBytes", "MeanIAT(ns)",
+            printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s | %-12s\n",
+                   "STT", "SrcIP:Port->DestIP:DestPort",
+                   "FlowDuration", "FlowPktsPerSec", "FlowBytesPerSec", "FlowIATMean", "PktsLenMean",
                    "k-dist", "reach[0]", "lrd", "lof");
 
             for (int i = 0; i < flow_count; i++) {
