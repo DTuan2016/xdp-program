@@ -11,12 +11,24 @@
 #include "common_kern_user.h"
 
 #define NANOSEC_PER_SEC 1000000000ULL
+#define MAX_FEATURES 5
 
 #ifndef lock_xadd
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add((ptr), (val)))
 #endif
 
 /* ================= MAPS ================= */
+
+// SVM weights + bias: 5 features + 1 bias
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, MAX_FEATURES + 1);
+    __type(key, __u32);
+    __type(value, __s32);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} svm_map SEC(".maps");
+
+// Flow tracking
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, struct flow_key);
@@ -25,38 +37,6 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_key);
-    __type(value, data_point);
-    __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_dropped SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
-    __type(key, __u32);
-    __type(value, Node);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_randforest_nodes SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, struct forest_params);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_randforest_params SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, __u32);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_counter SEC(".maps");
-
 /* ================= PACKET PARSING ================= */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                  struct flow_key *key,
@@ -64,38 +44,64 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 {
     void *data_end = (void *)(long)ctx->data_end;
     void *data     = (void *)(long)ctx->data;
+    __u16 eth_proto = 0;
+    __u32 ip_header_len;
+    __u8 *transport_data;
+    const int eth_header_len = sizeof(struct ethhdr);
 
+    // 1. Ethernet Header
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end)
         return -1;
 
-    if (eth->h_proto == bpf_htons(0x88cc))
+    eth_proto = eth->h_proto;
+
+    if (eth_proto == bpf_htons(0x88cc))
         return -2; // drop LLDP
 
-    if (eth->h_proto != bpf_htons(ETH_P_IP))
+    if (eth_proto != bpf_htons(ETH_P_IP))
         return -1;
 
+    // 2. IP Header
     struct iphdr *iph = (struct iphdr *)(eth + 1);
+    // Kích thước tối thiểu của header IP
     if ((void *)(iph + 1) > data_end)
         return -1;
 
-    key->src_ip = iph->saddr;
+    ip_header_len = iph->ihl * 4;
+    
+    // KIỂM TRA GIỚI HẠN CHO IP HEADER: Đảm bảo IP header không bị cắt
+    if (data + eth_header_len + ip_header_len > data_end)
+        return -1;
 
+    key->src_ip = iph->saddr;
+    key->dst_ip = iph->daddr;
+    key->proto = iph->protocol;
+    
+    transport_data = (__u8 *)iph + ip_header_len;
+
+    // 3. Transport Header (TCP/UDP)
     if (iph->protocol == IPPROTO_TCP) {
-        struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
-        if ((void *)(tcph + 1) > data_end)
+        // KIỂM TRA GIỚI HẠN VÀ TRUY CẬP AN TOÀN
+        struct tcphdr *tcph = (struct tcphdr *)transport_data;
+        if ((void *)(tcph + 1) > data_end) 
             return -1;
-        key->src_port = tcph->source;
+            
+        key->src_port = bpf_ntohs(tcph->source);
+        key->dst_port = bpf_ntohs(tcph->dest);
     } else if (iph->protocol == IPPROTO_UDP) {
-        struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
+        // KIỂM TRA GIỚI HẠN VÀ TRUY CẬP AN TOÀN
+        struct udphdr *udph = (struct udphdr *)transport_data;
         if ((void *)(udph + 1) > data_end)
             return -1;
-        key->src_port = udph->source;
+            
+        key->src_port = bpf_ntohs(udph->source);
+        key->dst_port = bpf_ntohs(udph->dest);
     } else {
         key->src_port = 0;
+        key->dst_port = 0;
     }
 
-    key->src_port = bpf_ntohs(key->src_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
@@ -112,11 +118,11 @@ static __always_inline void update_feature_in_datapoint(data_point *dp)
 
 /* ================= FLOW STATS ================= */
 static __always_inline data_point *update_stats(struct flow_key *key,
-                                                struct xdp_md *ctx)
+                                               struct xdp_md *ctx)
 {
     __u64 ts_us = bpf_ktime_get_ns() / 1000;
-    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
-                             (__u8 *)((void *)(long)ctx->data));
+    __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) - 
+                            (__u8 *)((void *)(long)ctx->data));
 
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
@@ -129,21 +135,17 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
 
-        __u32 idx = 0;
-        __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
-        if (cnt)
-            __sync_fetch_and_add(cnt, 1);
-
-        return bpf_map_lookup_elem(&xdp_flow_tracking, key);
+        // Phải lookup lại để có con trỏ hợp lệ nếu update thành công
+        return bpf_map_lookup_elem(&xdp_flow_tracking, key); 
     }
 
     __u64 iat_ns = (dp->last_seen > 0 && ts_us >= dp->last_seen) ? ts_us - dp->last_seen : 0;
 
-    __sync_fetch_and_add(&dp->total_pkts, 1);
-    __sync_fetch_and_add(&dp->total_bytes, pkt_len);
+    lock_xadd(&dp->total_pkts, 1);
+    lock_xadd(&dp->total_bytes, pkt_len);
 
     if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
+        lock_xadd(&dp->sum_IAT, iat_ns);
 
     dp->last_seen = ts_us;
 
@@ -154,6 +156,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
 
     dp->flow_duration = dp->last_seen - dp->start_ts;
     if (dp->flow_duration > 0) {
+        // Nhân 1000000ULL (micro giây -> giây)
         dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
         dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
     }
@@ -162,75 +165,44 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     return dp;
 }
 
-/* ================= TREE INFERENCE ================= */
-static __always_inline int predict_one_tree(__u32 root_idx, const data_point *dp)
+/* ================= SVM CALCULATION (LOOP UNROLLED) ================= */
+static __always_inline __s32 calculate_svm(data_point *dp)
 {
-    __u32 node_idx = root_idx;
+    long dot = 0;
+    __u32 i;
+    __s32 *w;
 
-#pragma unroll MAX_TREE_DEPTH
-    for (int depth = 0; depth < MAX_TREE_DEPTH; depth++) {
-        if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
-            return 0; // out-of-bounds
-        }
+    // Feature 0
+    i = 0;
+    w = bpf_map_lookup_elem(&svm_map, &i);
+    if (w) dot += (*w) * dp->features[0];
 
-        Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
-        if (!node)
-            return 0;
+    // Feature 1
+    i = 1;
+    w = bpf_map_lookup_elem(&svm_map, &i);
+    if (w) dot += (*w) * dp->features[1];
 
-        // bpf_printk("TreeWalk: depth=%d node_idx=%u feat=%d split=%d is_leaf=%d\n",
-        //            depth, node_idx, node->feature_idx, node->split_value, node->is_leaf);
+    // Feature 2
+    i = 2;
+    w = bpf_map_lookup_elem(&svm_map, &i);
+    if (w) dot += (*w) * dp->features[2];
 
-        if (node->is_leaf) {
-            // bpf_printk("Leaf reached: node_idx=%u label=%d\n", node_idx,
-            //            node->label);
-            return node->label;
-        }
+    // Feature 3
+    i = 3;
+    w = bpf_map_lookup_elem(&svm_map, &i);
+    if (w) dot += (*w) * dp->features[3];
+    
+    // Feature 4
+    i = 4;
+    w = bpf_map_lookup_elem(&svm_map, &i);
+    if (w) dot += (*w) * dp->features[4];
 
-        __u32 f_idx = node->feature_idx;
-        if (f_idx >= MAX_FEATURES)
-            return 0;
 
-        __u32 f_val = dp->features[f_idx];
-        __s32 split = node->split_value;
+    __u32 bias_key = MAX_FEATURES; // key 5 for bias
+    __s32 *b = bpf_map_lookup_elem(&svm_map, &bias_key);
+    if (b) dot += *b;
 
-        __u32 next_idx;
-        if (f_val <= ( __u32)split) {
-            next_idx = node->left_idx;
-        } else {
-            next_idx = node->right_idx;
-        }
-
-        if (next_idx == (__u32)-1 || next_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
-            return 0;
-        }
-
-        node_idx = next_idx;
-    }
-
-    return 0;
-}
-
-/* ================= RANDOM FOREST ================= */
-static __always_inline int predict_forest(data_point *dp)
-{
-    __u32 key = 0;
-    struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &key);
-    if (!params || params->n_trees == 0)
-        return 0;
-
-    __u32 max_trees = (params->n_trees > MAX_TREES) ? MAX_TREES : params->n_trees;
-
-    int votes0 = 0, votes1 = 0;
-
-    #pragma unroll MAX_TREES
-    for (__u32 t = 0; t < max_trees; t++) {
-        __u32 root_key = t * MAX_NODE_PER_TREE;
-        int pred = predict_one_tree(root_key, dp);
-        if (pred == 0) votes0++;
-        else votes1++;
-    }
-
-    return (votes1 > votes0) ? 1 : 0;
+    return dot;
 }
 
 /* ================= XDP ENTRY ================= */
@@ -242,7 +214,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
     if (ret == -2)
-        return XDP_DROP;  // Drop LLDP
+        return XDP_DROP;  // drop LLDP
     if (ret < 0)
         return XDP_PASS;
 
@@ -250,10 +222,13 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (!dp)
         return XDP_PASS;
 
-    int pred = predict_forest(dp);
-    dp->label = pred ? 1 : 0;
+    long eval = calculate_svm(dp);
 
-    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
+    dp->label = (eval < 0) ? 0 : 1; // 0=attack, 1=BENIGN
+
+    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY); 
+    // Giữ lại dòng này nếu cần, nhưng thường không cần thiết sau lookup/update.
+
     return XDP_PASS;
 }
 
