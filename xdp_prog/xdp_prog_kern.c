@@ -350,23 +350,16 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (ret < 0)
         return XDP_PASS;
 
-    // if (key.src_ip == bpf_htonl(0xC0A83203)) {  /* 192.168.50.3 -> 0xC0A83203 */
-    //     // bpf_printk("Bypass anomaly detection for 192.168.50.3\n");
-    //     return XDP_PASS;
-    // }
-    /* Cập nhật stats và lấy con trỏ dp (lookup 1 lần) */
     data_point *dp = update_stats(&key, ctx);
     if (!dp)
         return XDP_PASS;
-
-    /* Chỉ detect sau khi warm-up */
+    
     __u32 idx = 0;
     __u32 *count = bpf_map_lookup_elem(&flow_counter, &idx);
     if (count && *count > WARM_UP_FOR_KNN) {
         int anomaly = detect_anomaly(&key, dp);
         if (anomaly) {
             dp->is_normal = 0;
-            // bpf_printk("ANOMALY DETECTED %d:%d", key.src_ip, key.src_port);
             data_point local_dp = {};
             __builtin_memcpy(&local_dp, dp, sizeof(data_point));
             bpf_map_update_elem(&flow_dropped, &key, &local_dp, BPF_ANY);
@@ -379,7 +372,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
             bpf_map_update_elem(&xdp_flow_tracking, &key, &local_dp, BPF_ANY);
         }
     } else {
-        dp->is_normal = 1; /* Warm-up coi là normal */
+        dp->is_normal = 1;
     }
     // bpf_map_update_elem(&xdp_flow_tracking, &key, &dp, BPF_ANY);
     return XDP_PASS;
