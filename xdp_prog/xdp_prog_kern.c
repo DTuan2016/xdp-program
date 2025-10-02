@@ -106,14 +106,34 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
+static __always_inline __u8 ilog2_u64(__u64 x)
+{
+    static const __u8 tbl[16] = {0,1,2,2,3,3,3,3,4,4,4,4,4,4,4,4};
+    __u8 r = 0;
+
+    if (x >> 32) {
+        __u32 hi = x >> 32;
+        if (hi >= (1<<16)) { hi >>= 16; r += 16; }
+        if (hi >= (1<<8))  { hi >>= 8;  r += 8; }
+        if (hi >= (1<<4))  { hi >>= 4;  r += 4; }
+        return r + tbl[hi & 0xF];
+    } else {
+        __u32 lo = x & 0xFFFFFFFF;
+        if (lo >= (1<<16)) { lo >>= 16; r += 16; }
+        if (lo >= (1<<8))  { lo >>= 8;  r += 8; }
+        if (lo >= (1<<4))  { lo >>= 4;  r += 4; }
+        return r + tbl[lo & 0xF];
+    }
+}
+
 /* ================= FEATURE UPDATE ================= */
 static __always_inline void update_feature_in_datapoint(data_point *dp)
 {
-    dp->features[0] = (__u32)dp->flow_duration;
-    dp->features[1] = dp->flow_pkts_per_s;
-    dp->features[2] = dp->pkt_len_mean;
-    dp->features[3] = dp->flow_IAT_mean;
-    dp->features[4] = dp->flow_bytes_per_s;
+    dp->features[0] = ilog2_u64(dp->flow_duration);
+    dp->features[1] = ilog2_u64(dp->flow_pkts_per_s);
+    dp->features[2] = ilog2_u64(dp->flow_bytes_per_s);
+    dp->features[3] = ilog2_u64(dp->flow_IAT_mean);
+    dp->features[4] = ilog2_u64(dp->pkt_len_mean);
 }
 
 /* ================= FLOW STATS ================= */
@@ -227,8 +247,6 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     dp->label = (eval < 0) ? 0 : 1; // 0=attack, 1=BENIGN
 
     bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY); 
-    // Giữ lại dòng này nếu cần, nhưng thường không cần thiết sau lookup/update.
-
     return XDP_PASS;
 }
 

@@ -21,15 +21,16 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* ================= CSV PRINT ================= */
 static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
-    struct in_addr src_addr;
-    src_addr.s_addr = key->src_ip;
-    struct in_addr dst_addr;
-    dst_addr.s_addr = key->dst_ip;
-    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u\n",
-            inet_ntoa(src_addr),
+    char src_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    fprintf(f, "%s,%u,%s,%u,%d,%u,%u,%u,%u,%u,%u\n",
+            src_ip,
             key->src_port,
-            inet_ntoa(dst_addr),
+            dst_ip,
             key->dst_port,
+            key->proto,
             dp->features[0],
             dp->features[1],
             dp->features[2],
@@ -78,7 +79,7 @@ int main(int argc, char **argv) {
     }
 
     /* Header CSV */
-    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
+    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
 
     // dump_nodes_to_csv(map_fd_nodes, f_nodes);
     dump_flow_map_to_csv(map_fd_flows, f_flows);
