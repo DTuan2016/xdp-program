@@ -127,39 +127,46 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
 
     while (fgets(line, sizeof(line), f) && count < max_rows) {
         data_point dp = {0};
+        int idx;
         int src_port, dst_port;
         char src_ip[64];
         char dst_ip[64];
         double feature0, feature1, feature2, feature3, feature4;
-        int label;
+        int un_label, proto;
+        char label_str[32];  // label as string
         
         int n = sscanf(line,
-                       "%63[^,],%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%d",
-                        src_ip, &src_port, dst_ip, &dst_port,
+                       "%d,%63[^,],%d,%63[^,],%d,%d,%lf,%lf,%lf,%lf,%lf,%d,%31s",
+                       &idx, src_ip, &src_port, dst_ip, &dst_port, &proto,
                        &feature0, &feature1, &feature2,
-                       &feature3, &feature4, &label);
+                       &feature3, &feature4, &un_label, label_str);
 
-        if (n != 10) continue;
-        /* Copy to dp.features[] - order must match kernel */
+        if (n != 13) continue;
+
+        /* Copy features */
         dp.features[0] = feature0;
         dp.features[1] = feature1;
         dp.features[2] = feature2;
         dp.features[3] = feature3;
         dp.features[4] = feature4;
         
-        dp.label = label;
+        /* Convert label string to int: BENIGN=1, else=0 */
+        if (strcmp(label_str, "BENIGN") == 0)
+            dp.label = 1;
+        else
+            dp.label = 0;
+
         dataset[count++] = dp;
 
-        if (count <= 5) { // Print first few for debugging
-            printf("Sample %d: duration=%u, pkts/s=%u, mean_len=%u, IAT=%u, bytes/s=%u, label=%d\n",
-                   count, dp.features[0], dp.features[1], dp.features[2], 
-                   dp.features[3], dp.features[4], dp.label);
-        }
+        // if (count <= 5) { // Print first few for debugging
+        //     printf("Sample %d: duration=%.0f, pkts/s=%.0f, mean_len=%.0f, IAT=%.0f, bytes/s=%.0f, label=%d\n",
+        //            count, dp.features[0], dp.features[1], dp.features[2], 
+        //            dp.features[3], dp.features[4], dp.label);
+        // }
     }
     fclose(f);
     return count;
 }
-
 
 double c_factor(int n) {
     if (n <= 1) return 0.0;
@@ -489,7 +496,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset1("/home/dongtv/dtuan/data_portmap/data_portmap.csv",
+    int train_count = read_csv_dataset1("/home/dongtv/dtuan/training_isolation/data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");

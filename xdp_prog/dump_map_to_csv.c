@@ -45,11 +45,12 @@ static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
     addr1.s_addr = key->dst_ip; // network order
     inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%d\n",
         ip_str,
         key->src_port,
         ip_dest,
-        key->src_port,
+        key->dst_port,
+        key->proto,
         dp->features[0],
         dp->features[1],
         dp->features[2],
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
     }
 
     fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,IsLeaf\n");
-    fprintf(f2, "SrcIP,SrcPort,feature0,feature1,feature2,feature3,feature4,Label\n");
+    fprintf(f2, "SrcIP,SrcPort,DstIP,DstPort,proto,feature0,feature1,feature2,feature3,feature4,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);
     fclose(f1);

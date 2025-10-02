@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <math.h>
 /*All of this defines have max accuracy ~93%*/ 
-#define SCALE               1000
+#define SCALE               1000000
 #define TRAINING_SET        3200
 #define MAX_FLOW_SAVED      1000
 #define MAX_FEATURES        5
