@@ -126,7 +126,7 @@ int main(int argc, char **argv)
     }
 
     fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,IsLeaf\n");
-    fprintf(f2, "SrcIP,SrcPort,DstIP,DstPort,proto,feature0,feature1,feature2,feature3,feature4,Label\n");
+    fprintf(f2, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);
     fclose(f1);

@@ -120,9 +120,9 @@ static __always_inline void update_feature_in_datapoint(data_point *dp)
 {
     dp->features[0] = (__u32)(dp->flow_duration);
     dp->features[1] = dp->flow_pkts_per_s;
-    dp->features[2] = dp->pkt_len_mean;
+    dp->features[2] = dp->flow_bytes_per_s;
     dp->features[3] = dp->flow_IAT_mean;
-    dp->features[4] = dp->flow_bytes_per_s;
+    dp->features[4] = dp->pkt_len_mean;
 }
 
 /* ================= UPDATE STATS ================= */
@@ -198,11 +198,11 @@ static __always_inline __u32 get_feature_safe(data_point *dp, __u32 feat_idx)
 }
 
 /* ================= PATH LENGTH ================= */
-static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx)
+static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
 {
     __u32 base = tree_idx * MAX_NODE_PER_TREE;
     __u32 key  = base;
-    int depth  = 0;
+    __s64 depth  = 0;
 
 #pragma unroll
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
@@ -216,7 +216,7 @@ static __always_inline int compute_path_length(data_point *dp, __u32 tree_idx)
             __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
             if (c_scaled) {
                 int c_int = (int)((*c_scaled + (SCALE/2)) / SCALE);
-                return depth + c_int;
+                return (depth + c_int);
             }
             return depth;
         }
@@ -269,10 +269,10 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (!dp) return XDP_PASS;
 
     if (is_anomaly(dp)) {
-        dp->label = 1;
+        dp->label = 0;
         bpf_map_update_elem(&flow_dropped, &key, dp, BPF_ANY);
     } else {
-        dp->label = 0;
+        dp->label = 1;
     }
     bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
     return XDP_PASS;
