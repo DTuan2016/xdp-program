@@ -94,7 +94,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    fprintf(f, "STT,SrcIP,SrcPort,DestIP,DestPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktsLenMean,Normal\n");
+    fprintf(f, "STT,SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktsLenMean,Label\n");
 
     dump_map_to_csv(map_fd, f);
 
