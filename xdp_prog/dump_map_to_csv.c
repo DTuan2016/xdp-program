@@ -26,7 +26,7 @@ static void print_flow_key_csv(FILE *f, struct flow_key *key) {
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
     char dst_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
-    fprintf(f, "%s,%u,%s,%u,%d", src_ip, key->src_port, dst_ip, key->src_port, key->proto);
+    fprintf(f, "%s,%u,%s,%u,%d", src_ip, key->src_port, dst_ip, key->dst_port, key->proto);
 }
 
 /* In ra data_point dưới dạng CSV */
