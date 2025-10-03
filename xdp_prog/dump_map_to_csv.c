@@ -31,13 +31,12 @@ static void print_flow_key_csv(FILE *f, struct flow_key *key) {
 
 /* In ra data_point dưới dạng CSV */
 static void print_data_point_csv(FILE *f, data_point *dp) {
-    fprintf(f, ",%llu,%u,%u,%u,%u,%.6f,%u",
+    fprintf(f, ",%llu,%u,%u,%u,%u,%u",
            dp->flow_duration,
            dp->flow_pkts_per_s,
            dp->flow_bytes_per_s,
            dp->flow_IAT_mean,
            dp->pkts_len_mean,
-           (float)dp->lof_value / SCALEEEEEE,
            dp->is_normal);
 }
 
@@ -90,13 +89,13 @@ int main(int argc, char **argv)
     }
 
     // FILE *f = fopen("/home/dongtv/dtuan/data_pcap/lof_results/lof_2_13.csv", "w");
-    FILE *f = fopen("baseline.csv", "w");
+    FILE *f = fopen("test.csv", "w");
     if (!f) {
         perror("fopen");
         return EXIT_FAILURE;
     }
 
-    fprintf(f, "STT,SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,LOF,Normal\n");
+    fprintf(f, "STT,SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
 
     dump_map_to_csv(map_fd, f);
 
