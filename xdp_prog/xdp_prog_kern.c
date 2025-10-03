@@ -80,22 +80,28 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         return -1;
 
     key->src_ip = iph->saddr;
+    key->dst_ip = iph->daddr;
+    key->proto  = iph->protocol;
 
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
             return -1;
         key->src_port = tcph->source;
+        key->dst_port = tcph->dest;
     } else if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(udph + 1) > data_end)
             return -1;
         key->src_port = udph->source;
+        key->dst_port = udph->source;
     } else {
         key->src_port = 0;
+        key->dst_port = 0;
     }
 
     key->src_port = bpf_ntohs(key->src_port);
+    key->dst_port = bpf_ntohs(key->dst_port);
     *pkt_len = (__u64)((__u8 *)data_end - (__u8 *)data);
     return 0;
 }
@@ -105,9 +111,9 @@ static __always_inline void update_feature_in_datapoint(data_point *dp)
 {
     dp->features[0] = (__u32)dp->flow_duration;
     dp->features[1] = dp->flow_pkts_per_s;
-    dp->features[2] = dp->pkt_len_mean;
+    dp->features[2] = dp->flow_bytes_per_s;
     dp->features[3] = dp->flow_IAT_mean;
-    dp->features[4] = dp->flow_bytes_per_s;
+    dp->features[4] = dp->pkt_len_mean;
 }
 
 /* ================= FLOW STATS ================= */

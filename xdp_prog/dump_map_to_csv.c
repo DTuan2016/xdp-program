@@ -33,17 +33,28 @@ static void print_node_csv(FILE *f, __u32 key, const Node *node) {
 }
 
 static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
-    struct in_addr ip_addr;
-    ip_addr.s_addr = key->src_ip;
-    fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%u\n",
-            inet_ntoa(ip_addr),
-            key->src_port,
-            dp->features[0],
-            dp->features[1],
-            dp->features[2],
-            dp->features[3],
-            dp->features[4],
-            dp->label);
+    char ip_str[INET_ADDRSTRLEN];
+    struct in_addr addr;
+    addr.s_addr = key->src_ip; // network order
+    inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+    char ip_dest[INET_ADDRSTRLEN];
+    struct in_addr addr1;
+    addr1.s_addr = key->dst_ip; // network order
+    inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
+
+    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%d\n",
+        ip_str,
+        key->src_port,
+        ip_dest,
+        key->dst_port,
+        key->proto,
+        dp->features[0],
+        dp->features[1],
+        dp->features[2],
+        dp->features[3],
+        dp->features[4],
+        dp->label
+    );
 }
 
 /* ================= DUMP MAPS ================= */
@@ -110,7 +121,7 @@ int main(int argc, char **argv) {
 
     /* Header CSV */
     fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Label,Reserved\n");
-    fprintf(f_flows, "SrcIP,SrcPort,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
+    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
 
     dump_nodes_to_csv(map_fd_nodes, f_nodes);
     dump_flow_map_to_csv(map_fd_flows, f_flows);
