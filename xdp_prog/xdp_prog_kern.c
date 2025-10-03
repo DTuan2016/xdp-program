@@ -137,6 +137,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
                                                 int is_fwd)
 {
     __u64 ts      = bpf_ktime_get_ns();
+    ts = ts / 1000;
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
                             (__u8 *)((void *)(long)ctx->data));
 
@@ -187,8 +188,8 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     }
     dp->flow_duration = dp->last_seen - dp->start_ts;
     if(dp->flow_duration > 0){
-        dp->flow_bytes_per_s = (dp->total_bytes * 1000000000) / dp->flow_duration;
-        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000000) / dp->flow_duration;
+        dp->flow_bytes_per_s = (dp->total_bytes * 1000000) / dp->flow_duration;
+        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000) / dp->flow_duration;
     }
     return dp;
 }
