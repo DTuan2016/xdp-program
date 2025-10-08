@@ -496,7 +496,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset1("/home/dongtv/dtuan/training_isolation/data.csv",
+    int train_count = read_csv_dataset1("/home/lanforge/xdp-program/data/data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
@@ -544,8 +544,9 @@ int main(int argc, char **argv) {
     double threshold_score = scores[threshold_index];
 
     /* Convert score threshold -> depth threshold */
-    double c_n = c_factor(params.sample_size);
-    double depth_threshold = -log2(threshold_score) * c_n;
+    // double c_n = c_factor(params.sample_size);
+    // double depth_threshold = -log2(threshold_score) * c_n;
+    double depth_threshold = -log2(threshold_score);
 
     params.threshold = (__u32)(depth_threshold * SCALE);
     /* Save to maps (nodes + c(n) + params) */

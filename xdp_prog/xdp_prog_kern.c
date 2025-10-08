@@ -211,7 +211,8 @@ static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
             break;
 
         if (node->is_leaf) {
-            __u32 size = (node->num_points <= TRAINING_SET) ? node->num_points : TRAINING_SET;
+            // __u32 size = (node->num_points <= MAX_SAMPLE_PER_NODE) ? node->num_points : MAX_SAMPLE_PER_NODE;
+            __u32 size = MAX_SAMPLE_PER_NODE;
             __u32 c_key = size;
             __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
             if (c_scaled) {
@@ -250,8 +251,16 @@ static __always_inline int is_anomaly(data_point *dp)
         total_depth += compute_path_length(dp, t);
 
     __u32 avg_depth = ((__u32)total_depth * SCALE) / n_trees;
+    __u32 size = MAX_SAMPLE_PER_NODE;
+    __u32 c_key = size;
+    __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
+    if(!c_scaled){
+        return 0;
+    }
+    __u32 c_value = *c_scaled;
+    __u32 score = (avg_depth * SCALE) / c_value;
     // bpf_printk("AVG_DEPTH:%d", avg_depth);
-    return (avg_depth < params->threshold) ? 1 : 0;
+    return (score < params->threshold) ? 1 : 0;
 }
 
 /* ================= XDP PROGRAM ================= */
