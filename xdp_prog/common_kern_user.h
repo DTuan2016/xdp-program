@@ -6,12 +6,13 @@
 
 #include <stdint.h>
 #include <math.h>
-#define SCALE               1000
+/*All of this defines have max accuracy ~93%*/ 
+#define SCALE               1000000
 #define TRAINING_SET        3200
 #define MAX_FLOW_SAVED      1000
 #define MAX_FEATURES        5
-#define MAX_TREES           100
-#define MAX_NODE_PER_TREE   128
+#define MAX_TREES           60
+#define MAX_NODE_PER_TREE   256
 #define MAX_SAMPLE_PER_NODE 256
 #define NULL_IDX            -1
 #define MAX_TEST            300
@@ -22,7 +23,9 @@
 struct flow_key {
     __u32 src_ip;
     __u16 src_port;
-    __u16 padding;
+    __u32 dst_ip;
+    __u16 dst_port;
+    __u8  proto;
 } __attribute__((packed));
 
 typedef struct {

@@ -40,10 +40,17 @@ static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
     struct in_addr addr;
     addr.s_addr = key->src_ip; // network order
     inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
+    char ip_dest[INET_ADDRSTRLEN];
+    struct in_addr addr1;
+    addr1.s_addr = key->dst_ip; // network order
+    inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%u,%u,%u,%u,%u,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%d\n",
         ip_str,
         key->src_port,
+        ip_dest,
+        key->dst_port,
+        key->proto,
         dp->features[0],
         dp->features[1],
         dp->features[2],
@@ -112,14 +119,14 @@ int main(int argc, char **argv)
     }
 
     FILE *f1 = fopen("isoforest_nodes.csv", "w");
-    FILE *f2 = fopen("xdp_flow_tracking.csv", "w");
+    FILE *f2 = fopen("isoforest_30.csv", "w");
     if (!f1 || !f2) {
         perror("fopen");
         return EXIT_FAILURE;
     }
 
-    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,Size,IsLeaf\n");
-    fprintf(f2, "SrcIP,SrcPort,feature1,feature2,feature3,feature4,Label\n");
+    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,IsLeaf\n");
+    fprintf(f2, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);
     fclose(f1);
