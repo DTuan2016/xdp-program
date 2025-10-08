@@ -221,7 +221,7 @@ static __always_inline __u16 euclidean_distance(const data_point *a, const data_
     //            fx, fy, fz, fw, fh, dx, dy, dz, dw, dh);
     __u32 sum = dx*dx + dy*dy + dz*dz + dw*dw + dh*dh;
     __u16 res = bpf_sqrt(sum);
-    // bpf_printk("DIST sqrt=%u\n", res);
+    bpf_printk("DIST sqrt=%u\n", res);
     return res;
 }
 
@@ -389,8 +389,8 @@ static __always_inline void compute_anomaly_for_target(const struct flow_key *ke
 
     if (target->lof_value > threshold) {
         target->is_normal = 0;   // Bất thường
-        // bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
-        //            target->lof_value, threshold);
+        bpf_printk("ANOMALY DETECTED: LOF=%u > THRESH=%u",
+                   target->lof_value, threshold);
         bpf_map_update_elem(&flow_dropped, key, target, BPF_ANY);
         // bpf_map_delete_elem(&xdp_flow_tracking, key);
     } else {
