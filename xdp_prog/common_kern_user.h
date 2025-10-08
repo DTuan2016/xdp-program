@@ -7,8 +7,9 @@
 #include <stdint.h>
 /* KNN, Threshold have max accuracy */
 #define KNN             2
-#define DIST_THRESHOLD  12
+#define DIST_THRESHOLD  15
 /* Change benign set */
+//794v - Desktop/benign_pm.pcap
 #define MAX_FLOW_SAVED  200
 #define WARM_UP_FOR_KNN 100
 // #define MAX_TEST        1000
