@@ -41,7 +41,9 @@ const char *pin_basedir = "/sys/fs/bpf";
 static void print_flow_key(struct flow_key *key) {
     char src_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
-    printf("%s:%u", src_ip, ntohs(key->src_port));
+    char dst_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+    printf("%s:%u->%s:%u proto=%d", src_ip, ntohs(key->src_port), dst_ip, ntohs(key->dst_port), key->proto);
 }
 
 static void print_data_point(data_point *dp) {
@@ -93,7 +95,7 @@ int main(int argc, char **argv)
         int stt = 1;
         printf("\n=== Flow Table ===\n");
         printf("%-4s | %-21s | %-12s | %-12s | %-12s | %-12s | %-12s |\n",
-               "STT", "SrcIP:Port",
+               "STT", "SrcIP:SrcPort->DstIP:DstPort proto",
                "FlowDur(ns)", "flow_bytes_per_second", "flow_pkts_per_second", "MeanIAT(ns)",
                 "pkts_len_mean");
 
