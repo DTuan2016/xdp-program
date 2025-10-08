@@ -204,7 +204,7 @@ static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
     __u32 key  = base;
     __s64 depth  = 0;
 
-#pragma unroll
+// #pragma unroll 256
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
         iTreeNode *node = bpf_map_lookup_elem(&xdp_isoforest_nodes, &key);
         if (!node)

@@ -496,7 +496,7 @@ int main(int argc, char **argv) {
 
     /* Load dataset */
     data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset1("/home/lanforge/xdp-program/data/data.csv",
+    int train_count = read_csv_dataset1("/home/dongtv/dtuan/xdp-program/data/data.csv",
                                        train_dataset, TRAINING_SET);
     if (train_count < 1) {
         fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
