@@ -19,6 +19,9 @@ typedef int32_t fixed;
 struct flow_key {
     __u32 src_ip;
     __u16 src_port;
+    // __u32 dst_ip;
+    // __u16 dst_port;
+    // __u8  proto;
     __u16 padding;  /* Explicit padding for alignment */
 } __attribute__((packed));
 

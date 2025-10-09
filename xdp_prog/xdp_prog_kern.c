@@ -371,7 +371,7 @@ static int update_affected_callback(void *map, const void *key, void *value, voi
 
 /*================= XDP PROGRAM =================*/
 SEC("xdp")
-int xdp_print_all_flows(struct xdp_md *ctx)
+int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     bpf_printk("=== [MAIN] XDP packet processing started ===");
     
