@@ -11,7 +11,8 @@
 #define TRAINING_SET        3200
 #define MAX_FLOW_SAVED      1000
 #define MAX_FEATURES        5
-#define MAX_TREES           60
+// Còn 20, 10
+#define MAX_TREES           30
 #define MAX_NODE_PER_TREE   128
 #define MAX_SAMPLE_PER_NODE 256
 #define NULL_IDX            -1
