@@ -143,7 +143,13 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
 
         if (n != 13) continue;
 
-        /* Copy features */
+        // if (feature0 > 0) feature0 = log2(feature0 + 1e-9);
+        // if (feature1 > 0) feature1 = log2(feature1 + 1e-9);
+        // if (feature2 > 0) feature2 = log2(feature2 + 1e-9);
+        // if (feature3 > 0) feature3 = log2(feature3 + 1e-9);
+        // if (feature4 > 0) feature4 = log2(feature4 + 1e-9);
+        // // +1e-9 để tránh log2(0)
+
         dp.features[0] = feature0;
         dp.features[1] = feature1;
         dp.features[2] = feature2;

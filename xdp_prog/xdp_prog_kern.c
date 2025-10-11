@@ -56,15 +56,6 @@ struct {
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_isoforest_params SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, __u32);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_counter SEC(".maps");
-
-
 /* ================= PARSING ================= */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
                                                  struct flow_key *key,
@@ -138,12 +129,12 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
         data_point zero = {};
-        zero.start_ts    = ts_us;
-        zero.last_seen   = ts_us;
-        zero.total_pkts  = 1;
-        zero.total_bytes = pkt_len;
-        zero.sum_IAT     = 0;
-        zero.sum_pkt_len = pkt_len; /* initialize with first pkt length */
+        zero.start_ts       = ts_us;
+        zero.last_seen      = ts_us;
+        zero.total_pkts     = 1;
+        zero.total_bytes    = pkt_len;
+        zero.sum_IAT        = 0;
+        zero.flow_duration  = 0;
 
         #pragma unroll
         for (int i = 0; i < MAX_FEATURES; i++) {
@@ -153,12 +144,6 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
 
-        /* tăng counter flow */
-        __u32 idx = 0;
-        __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
-        if (cnt)
-            __sync_fetch_and_add(cnt, 1);
-
         return bpf_map_lookup_elem(&xdp_flow_tracking, key);
     }
 
@@ -167,8 +152,7 @@ static __always_inline data_point *update_stats(struct flow_key *key,
                    (current_us - dp->last_seen) : 0;
 
     __sync_fetch_and_add(&dp->total_pkts, 1);
-    __sync_fetch_and_add(&dp->total_bytes, pkt_len);
-    __sync_fetch_and_add(&dp->sum_pkt_len, pkt_len);
+    __sync_fetch_and_add(&dp->total_bytes, pkt_len); 
 
     if (iat_us > 0)
         dp->sum_IAT += iat_us;
