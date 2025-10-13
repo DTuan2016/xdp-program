@@ -7,21 +7,22 @@
 #include <stdint.h>
 
 /* Configuration constants */
-#define KNN  2
+#define KNN             2
+#define DIM             5
 // #define FIXED_N 3
-#define FIXED_SHIFT 16
-#define FIXED_SCALE (1 << FIXED_SHIFT)
+#define FIXED_SHIFT     8
+#define FIXED_SCALE     (1 << FIXED_SHIFT)
 
 /* Fixed-point arithmetic type */
-typedef int32_t fixed;
+typedef __u32 fixed;
 
 /* Flow identification key */
 struct flow_key {
     __u32 src_ip;
     __u16 src_port;
-    // __u32 dst_ip;
-    // __u16 dst_port;
-    // __u8  proto;
+    __u32 dst_ip;
+    __u16 dst_port;
+    __u8  proto;
     __u16 padding;  /* Explicit padding for alignment */
 } __attribute__((packed));
 
@@ -36,7 +37,16 @@ typedef struct {
     __u32 total_bytes;      /* Total byte count (Bytes/s)*/
     __u64 sum_IAT;          /* Sum of Inter-Arrival Times */
     __u32 flow_IAT_mean;    /* Mean Inter-Arrival Time */
+    __u64 flow_duration;    /* Flow Duration from start_ts to last_seen*/
     
+    /*
+        features[0]: flow_duration      (Log2) 
+        features[1]: flow_pkts_per_s    (Log2)
+        features[2]: flow_bytes_per_s   (Log2)
+        features[3]: flow_IAT_mean      (Log2)
+        features[4]: pkts_len_mean      (Log2)
+    */
+    fixed features[DIM];
     /* LOF (Local Outlier Factor) algorithm data */
     fixed k_distance;       /* k-distance value */
     fixed reach_dist[KNN];  /* Reachability distances to k neighbors */
@@ -44,84 +54,76 @@ typedef struct {
     fixed lof_value;        /* Local Outlier Factor score */
     
     /* Processing status */
-    int is_calculated;      /* 1 = calculated, 0 = not calculated */
+    int label;              /* 1 = normal, 0 = benign */
 } data_point;
 
 /* Fixed-point arithmetic functions */
 
-/* Convert float to fixed-point */
-static inline fixed fixed_from_float(float value)
+/* Convert float (as double in user space) to fixed-point */
+static __always_inline fixed fixed_from_float(double value)
 {
-    return (fixed)(value * FIXED_SCALE);
+    return (__u32)(value * (double)FIXED_SCALE);
 }
 
 /* Convert fixed-point to float */
-static inline float fixed_to_float(fixed value)
+static __always_inline float fixed_to_float(fixed value)
 {
-    return (float)value / FIXED_SCALE;
+    return (float)value / (float)FIXED_SCALE;
 }
 
-/* Convert integer to fixed-point */
-static inline fixed fixed_from_int(int value)
+/* Convert unsigned integer to fixed-point */
+static __always_inline fixed fixed_from_uint(__u32 value)
 {
-    return (fixed)(value << FIXED_SHIFT);
+    return value << FIXED_SHIFT;
 }
 
-/* Convert fixed-point to integer */
-static inline int fixed_to_int(fixed value)
+/* Convert fixed-point to integer (truncate fractional) */
+static __always_inline __u32 fixed_to_uint(fixed value)
 {
-    return (int)(value >> FIXED_SHIFT);
+    return value >> FIXED_SHIFT;
 }
 
-/* Fixed-point addition */
-static inline fixed fixed_add(fixed a, fixed b)
+/* Add (safe for unsigned overflow wraparound) */
+static __always_inline fixed fixed_add(fixed a, fixed b)
 {
     return a + b;
 }
 
-/* Fixed-point subtraction */
-static inline fixed fixed_sub(fixed a, fixed b)
+/* Subtract (saturating underflow protection) */
+static __always_inline fixed fixed_sub(fixed a, fixed b)
 {
-    return a - b;
+    return (a > b) ? (a - b) : 0;
 }
 
-/* Fixed-point multiplication */
-static inline fixed fixed_mul(fixed a, fixed b)
+/* Multiply (with scale correction) */
+static __always_inline fixed fixed_mul(fixed a, fixed b)
 {
-    int64_t temp = (int64_t)a * (int64_t)b;
+    /* Cast to 64-bit temporarily to avoid overflow before shift */
+    unsigned long long temp = (unsigned long long)a * (unsigned long long)b;
     return (fixed)(temp >> FIXED_SHIFT);
 }
 
 /* Fixed-point division */
-static inline fixed fixed_div(fixed a, fixed b)
+static __always_inline fixed fixed_div(fixed a, fixed b)
 {
     if (b == 0)
         return 0;
-    
-    uint64_t ua = (a < 0) ? (uint64_t)(-(int64_t)a) : (uint64_t)a;
-    uint32_t ub = (b < 0) ? (uint32_t)(-(int)b) : (uint32_t)b;
-    uint64_t tmp = (ua << FIXED_SHIFT);
-    fixed res = (fixed)(tmp / ub);
-    
-    if ((a ^ b) < 0) 
-        res = -res;
-    
-    return res;
+    unsigned long long temp = ((unsigned long long)a << FIXED_SHIFT);
+    return (fixed)(temp / b);
 }
 
-/* Fixed-point square root using Newton's method */
-static inline fixed fixed_sqrt(fixed value)
+/* Square root using integer Newton's method */
+static __always_inline fixed fixed_sqrt(fixed value)
 {
-    if (value < 0) 
+    if (value == 0)
         return 0;
 
     fixed x = value;
-    for (int i = 0; i < 16; i++) {
-        x = fixed_div(fixed_add(x, fixed_div(value, x)), fixed_from_int(2));
+    for (int i = 0; i < 8; i++) {
+        x = fixed_div(fixed_add(x, fixed_div(value, x)), fixed_from_uint(2));
     }
     return x;
 }
-
 /* Fixed-point absolute value */
 static inline fixed fixed_abs(fixed value)
 {
@@ -147,6 +149,40 @@ static inline fixed fixed_max(fixed a, fixed b)
 {
     return (a > b) ? a : b;
 }
+
+static __always_inline fixed fixed_log2(__u32 x)
+{
+    if (x == 0)
+        return 0;
+
+    __u32 int_part = 0;
+    __u32 tmp = x;
+    while (tmp >>= 1)
+        int_part++;
+
+    __u32 base = 1 << int_part;
+    __u32 remainder = x - base;
+
+    __u32 frac = (remainder << FIXED_SHIFT) / base;
+    return (int_part << FIXED_SHIFT) | frac;
+}
+
+// static __always_inline fixed fixed_log2(__u64 x)
+// {
+//     // if (x == 0)
+//     //     return 0;
+
+//     // __u32 int_part = 63 - __builtin_clzll(x);
+//     // fixed result = fixed_from_uint(int_part); 
+//     // if (int_part < 63) {
+//     //     __u64 fractional_bits = x << (64 - (int_part + 1)); 
+//     //     __u32 frac_val = (unsigned long)(fractional_bits >> (64 - FIXED_SHIFT));
+//     //     result |= frac_val; 
+//     // }
+    
+//     // return result;
+//     return (__u32)x;
+// }
 
 /* XDP action definitions for compatibility */
 #ifndef XDP_ACTION_MAX
