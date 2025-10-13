@@ -133,11 +133,16 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
         if (n != 13) continue;
 
         /* Copy features */
-        dp.features[0] = feature0;
-        dp.features[1] = feature1;
-        dp.features[2] = feature2;
-        dp.features[3] = feature3;
-        dp.features[4] = feature4;
+        dp.features[0] = fixed_from_float(log2(feature0 + 1.0));
+        dp.features[1] = fixed_from_float(log2(feature1 + 1.0));
+        dp.features[2] = fixed_from_float(log2(feature2 + 1.0));
+        dp.features[3] = fixed_from_float(log2(feature3 + 1.0));
+        dp.features[4] = fixed_from_float(log2(feature4 + 1.0));
+        // dp.features[0] = feature0;
+        // dp.features[1] = feature1;
+        // dp.features[2] = feature2;
+        // dp.features[3] = feature3;
+        // dp.features[4] = feature4;
         
         /* Convert label string to int: BENIGN=1, else=0 */
         if (strcmp(label_str, "BENIGN") == 0)
@@ -173,7 +178,7 @@ double getGiniImpurity(data_point *points, int num_points)
     }
 
     if (count0 == 0 || count1 == 0)
-        return 0.0; // Pure node
+        return 0.0;
 
     double p0 = (double)count0 / num_points;
     double p1 = (double)count1 / num_points;
@@ -181,6 +186,7 @@ double getGiniImpurity(data_point *points, int num_points)
     return 1.0 - (p0 * p0 + p1 * p1);
 }
 
+/*==================== Majority voting ====================*/
 int majority_label(data_point *points, int n)
 {
     int count0 = 0, count1 = 0;
@@ -196,8 +202,9 @@ int majority_label(data_point *points, int n)
     return (count1 > count0) ? 1 : 0;
 }
 
+/*==================== Find best split value ====================*/
 void find_best_split(data_point *points, int num_points,
-                     int *best_feature, __u32 *best_threshold)
+                     int *best_feature, fixed *best_threshold)
 {
     double best_gain = -1.0;
     *best_feature = -1;
@@ -209,7 +216,7 @@ void find_best_split(data_point *points, int num_points,
 
     for (int f = 0; f < MAX_FEATURES; f++)
     {
-        __u32 *feature_values = malloc(sizeof(__u32) * num_points);
+        fixed *feature_values = malloc(sizeof(fixed) * num_points);
         if (!feature_values)
             continue;
         for (int i = 0; i < num_points; i++)
@@ -223,7 +230,7 @@ void find_best_split(data_point *points, int num_points,
             {
                 if (feature_values[j] > feature_values[j + 1])
                 {
-                    __u32 temp = feature_values[j];
+                    fixed temp = feature_values[j];
                     feature_values[j] = feature_values[j + 1];
                     feature_values[j + 1] = temp;
                 }
@@ -236,7 +243,7 @@ void find_best_split(data_point *points, int num_points,
             {
                 continue;
             }
-            __u32 threshold = (feature_values[i] + feature_values[i + 1]) / 2;
+            fixed threshold = fixed_div(fixed_add(feature_values[i], feature_values[i + 1]), fixed_from_uint(2));
 
             // Count samples on each side
             int count_left = 0, count_right = 0;
@@ -312,35 +319,35 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
     if (label0_count == 0 || label1_count == 0 ||
         depth >= tree->max_depth || n < tree->min_samples_split)
     {
-        node->is_leaf = 1;
-        node->label = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
-        node->feature_idx = -1;
-        node->split_value = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->feature_idx   = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
     // Find best split
     int best_feature;
-    __u32 best_threshold;
+    fixed best_threshold;
     find_best_split(points, n, &best_feature, &best_threshold);
 
     if (best_feature == -1)
     {
         // No good split found, create leaf
-        node->is_leaf = 1;
-        node->label = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
-        node->feature_idx = -1;
-        node->split_value = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->feature_idx   = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
-    node->is_leaf = 0;
-    node->feature_idx = best_feature;
-    node->split_value = best_threshold;
+    node->is_leaf           = 0;
+    node->feature_idx       = best_feature;
+    node->split_value       = best_threshold;
 
     // Split data
     int left_count = 0, right_count = 0;
@@ -355,15 +362,15 @@ int build_tree(DecisionTree *tree, data_point *points, int n, int depth, int nod
     if (left_count == 0 || right_count == 0)
     {
         // Failed split, create leaf
-        node->is_leaf = 1;
-        node->label = majority_label(points, n);
-        node->left_idx = -1;
-        node->right_idx = -1;
-        node->split_value = -1;
+        node->is_leaf       = 1;
+        node->label         = majority_label(points, n);
+        node->left_idx      = -1;
+        node->right_idx     = -1;
+        node->split_value   = -1;
         return node_idx;
     }
 
-    data_point *left = malloc(left_count * sizeof(data_point));
+    data_point *left  = malloc(left_count  * sizeof(data_point));
     data_point *right = malloc(right_count * sizeof(data_point));
 
     if (!left || !right)
@@ -438,12 +445,12 @@ void train_decision_tree(DecisionTree *tree, data_point *dataset, int num_points
     // Initialize only used nodes area (safe)
     for (int i = 0; i < MAX_NODE_PER_TREE; i++)
     {
-        tree->nodes[i].is_leaf = 1;
-        tree->nodes[i].left_idx = -1;
-        tree->nodes[i].right_idx = -1;
-        tree->nodes[i].feature_idx = -1;
-        tree->nodes[i].split_value = 0;
-        tree->nodes[i].label = 0;
+        tree->nodes[i].is_leaf      = 1;
+        tree->nodes[i].left_idx     = -1;
+        tree->nodes[i].right_idx    = -1;
+        tree->nodes[i].feature_idx  = -1;
+        tree->nodes[i].split_value  = 0;
+        tree->nodes[i].label        = 0;
     }
 
     build_tree(tree, dataset, num_points, 0, 0);
@@ -513,10 +520,10 @@ void reindex_tree(DecisionTree *tree)
 
     while (qh < qt)
     {
-        int old_idx = queue[qh++];
-        int new_idx = old_to_new[old_idx];
-        Node *old_node = &tree->nodes[old_idx];
-        Node *nnode = &new_nodes[new_idx];
+        int old_idx     = queue[qh++];
+        int new_idx     = old_to_new[old_idx];
+        Node *old_node  = &tree->nodes[old_idx];
+        Node *nnode     = &new_nodes[new_idx];
 
         // copy node content
         *nnode = *old_node;
@@ -534,8 +541,8 @@ void reindex_tree(DecisionTree *tree)
                 if (old_to_new[child_old] == -1)
                 {
                     new_count++;
-                    old_to_new[child_old] = new_count;
-                    queue[qt++] = child_old;
+                    old_to_new[child_old]   = new_count;
+                    queue[qt++]             = child_old;
                 }
                 nnode->left_idx = old_to_new[child_old];
             }
@@ -558,8 +565,8 @@ void reindex_tree(DecisionTree *tree)
                 if (old_to_new[child_old] == -1)
                 {
                     new_count++;
-                    old_to_new[child_old] = new_count;
-                    queue[qt++] = child_old;
+                    old_to_new[child_old]   = new_count;
+                    queue[qt++]             = child_old;
                 }
                 nnode->right_idx = old_to_new[child_old];
             }
@@ -579,11 +586,11 @@ void reindex_tree(DecisionTree *tree)
     // clear remaining nodes (optional)
     for (int i = final_count; i < MAX_NODE_PER_TREE; i++)
     {
-        tree->nodes[i].is_leaf = 1;
-        tree->nodes[i].left_idx = -1;
-        tree->nodes[i].right_idx = -1;
-        tree->nodes[i].feature_idx = -1;
-        tree->nodes[i].split_value = 0;
+        tree->nodes[i].is_leaf      = 1;
+        tree->nodes[i].left_idx     = -1;
+        tree->nodes[i].right_idx    = -1;
+        tree->nodes[i].feature_idx  = -1;
+        tree->nodes[i].split_value  = 0;
     }
     tree->node_count = final_count;
     free(new_nodes);

@@ -42,17 +42,17 @@ static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point
     addr1.s_addr = key->dst_ip; // network order
     inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%f,%f,%f,%f,%f,%d\n",
         ip_str,
         key->src_port,
         ip_dest,
         key->dst_port,
         key->proto,
-        dp->features[0],
-        dp->features[1],
-        dp->features[2],
-        dp->features[3],
-        dp->features[4],
+        fixed_to_float(dp->features[0]),
+        fixed_to_float(dp->features[1]),
+        fixed_to_float(dp->features[2]),
+        fixed_to_float(dp->features[3]),
+        fixed_to_float(dp->features[4]),
         dp->label
     );
 }

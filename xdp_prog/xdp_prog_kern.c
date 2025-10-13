@@ -94,7 +94,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         if ((void *)(udph + 1) > data_end)
             return -1;
         key->src_port = udph->source;
-        key->dst_port = udph->source;
+        key->dst_port = udph->dest;
     } else {
         key->src_port = 0;
         key->dst_port = 0;
@@ -107,13 +107,22 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 }
 
 /* ================= FEATURE UPDATE ================= */
-static __always_inline void update_feature_in_datapoint(data_point *dp)
+static __always_inline void update_feature(data_point *dp)
 {
-    dp->features[0] = (__u32)dp->flow_duration;
-    dp->features[1] = dp->flow_pkts_per_s;
-    dp->features[2] = dp->flow_bytes_per_s;
-    dp->features[3] = dp->flow_IAT_mean;
-    dp->features[4] = dp->pkt_len_mean;
+    // Cần total_pkts > 1 để tránh chia cho 0
+    if (dp->total_pkts > 1) {
+        fixed flow_duration = fixed_log2(dp->flow_duration);
+        __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
+
+        dp->features[0] = flow_duration;
+        dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - flow_duration;
+        dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
+        dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
+        dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
+
+        // Cập nhật flow_IAT_mean cho thông tin debug
+        // dp->flow_IAT_mean = (mean_iat_us > 0) ? fixed_to_uint(fixed_log2(mean_iat_us)) : 0;
+    }
 }
 
 /* ================= FLOW STATS ================= */
@@ -152,19 +161,19 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         dp->sum_IAT += iat_ns;
 
     dp->last_seen = ts_us;
-
-    if (dp->total_pkts > 1) {
-        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
-        dp->pkt_len_mean  = dp->total_bytes / dp->total_pkts;
-    }
-
     dp->flow_duration = dp->last_seen - dp->start_ts;
-    if (dp->flow_duration > 0) {
-        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
-        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
-    }
+    // if (dp->total_pkts > 1) {
+    //     dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
+    //     dp->pkt_len_mean  = dp->total_bytes / dp->total_pkts;
+    // }
 
-    update_feature_in_datapoint(dp);
+    // dp->flow_duration = dp->last_seen - dp->start_ts;
+    // if (dp->flow_duration > 0) {
+    //     dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
+    //     dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+    // }
+
+    update_feature(dp);
     return dp;
 }
 
