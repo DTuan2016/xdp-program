@@ -97,6 +97,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         key->dst_port = udph->dest;
     } else {
         key->src_port = 0;
+        key->dst_port = 0;
     }
 
     key->src_port = bpf_ntohs(key->src_port);
@@ -107,13 +108,22 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 }
 
 /* ================= UPDATE FEATURE ================= */
-static __always_inline void update_feature_in_datapoint(data_point *dp)
+static __always_inline void update_feature(data_point *dp)
 {
-    dp->features[0] = (__u32)(dp->flow_duration);
-    dp->features[1] = dp->flow_pkts_per_s;
-    dp->features[2] = dp->flow_bytes_per_s;
-    dp->features[3] = dp->flow_IAT_mean;
-    dp->features[4] = dp->pkt_len_mean;
+    // Cần total_pkts > 1 để tránh chia cho 0
+    if (dp->total_pkts > 1) {
+        fixed flow_duration = fixed_log2(dp->flow_duration);
+        __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
+
+        dp->features[0] = flow_duration;
+        dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - flow_duration;
+        dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
+        dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
+        dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
+
+        // Cập nhật flow_IAT_mean cho thông tin debug
+        // dp->flow_IAT_mean = (mean_iat_us > 0) ? fixed_to_uint(fixed_log2(mean_iat_us)) : 0;
+    }
 }
 
 /* ================= UPDATE STATS ================= */
@@ -158,18 +168,18 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         dp->sum_IAT += iat_us;
 
     dp->last_seen = current_us;
+    dp->flow_duration = dp->last_seen - dp->start_ts;
+    // if (dp->total_pkts > 1){
+    //     dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);  // µs
+    //     dp->pkt_len_mean   = dp->sum_pkt_len / dp->total_pkts;
+    // }
 
-    if (dp->total_pkts > 1){
-        dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);  // µs
-        dp->pkt_len_mean   = dp->sum_pkt_len / dp->total_pkts;
-    }
-
-    dp->flow_duration = dp->last_seen - dp->start_ts;  // µs
-    if (dp->flow_duration > 0) {
-        dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
-        dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
-    }
-    update_feature_in_datapoint(dp);
+    // dp->flow_duration = dp->last_seen - dp->start_ts;  // µs
+    // if (dp->flow_duration > 0) {
+    //     dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
+    //     dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
+    // }
+    update_feature(dp);
     return dp;
 }
 
@@ -182,11 +192,11 @@ static __always_inline __u32 get_feature_safe(data_point *dp, __u32 feat_idx)
 }
 
 /* ================= PATH LENGTH ================= */
-static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
+static __always_inline fixed compute_path_length(data_point *dp, __u32 tree_idx)
 {
     __u32 base = tree_idx * MAX_NODE_PER_TREE;
     __u32 key  = base;
-    __s64 depth  = 0;
+    fixed depth  = 0;
 
 // #pragma unroll 256
     for (int i = 0; i < MAX_NODE_PER_TREE; i++) {
@@ -195,18 +205,17 @@ static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
             break;
 
         if (node->is_leaf) {
-            // __u32 size = (node->num_points <= MAX_SAMPLE_PER_NODE) ? node->num_points : MAX_SAMPLE_PER_NODE;
-            __u32 size = MAX_SAMPLE_PER_NODE;
+            __u32 size = (node->num_points > MAX_NODE_PER_TREE) ? MAX_NODE_PER_TREE : node->num_points;
             __u32 c_key = size;
-            __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
+            fixed *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
             if (c_scaled) {
-                int c_int = (int)((*c_scaled + (SCALE/2)) / SCALE);
-                return (depth + c_int);
+                // int c_int = (int)((*c_scaled + (SCALE/2)) / SCALE);
+                return (depth + *c_scaled);
             }
             return depth;
         }
 
-        __u32 f_val = get_feature_safe(dp, node->feature_idx);
+        fixed f_val = get_feature_safe(dp, node->feature_idx);
 
         if (f_val <= node->split_value) {
             if (node->left_idx == NULL_IDX) break;
@@ -215,7 +224,7 @@ static __always_inline __s64 compute_path_length(data_point *dp, __u32 tree_idx)
             if (node->right_idx == NULL_IDX) break;
             key = base + node->right_idx;
         }
-        depth++;
+        depth += fixed_from_uint(1);
     }
     return depth;
 }
@@ -230,21 +239,25 @@ static __always_inline int is_anomaly(data_point *dp)
     __u32 n_trees = params->n_trees;
     if (n_trees == 0) return 0;
 
-    int total_depth = 0;
+    fixed total_depth = 0;
     for (__u32 t = 0; t < n_trees && t < MAX_TREES; t++)
         total_depth += compute_path_length(dp, t);
 
-    __u32 avg_depth = ((__u32)total_depth * SCALE) / n_trees;
+    fixed avg_depth = fixed_div(total_depth, fixed_from_uint(n_trees));
+
     __u32 size = MAX_SAMPLE_PER_NODE;
     __u32 c_key = size;
-    __u32 *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
-    if(!c_scaled){
+    fixed *c_scaled = bpf_map_lookup_elem(&xdp_isoforest_c, &c_key);
+    if (!c_scaled)
         return 0;
-    }
-    __u32 c_value = *c_scaled;
-    __u32 score = (avg_depth * SCALE) / c_value;
-    // bpf_printk("AVG_DEPTH:%d", avg_depth);
-    return (score < params->threshold) ? 1 : 0;
+
+    fixed score = fixed_div(avg_depth, *c_scaled);
+    score = fixed_exp2(score);
+    score = fixed_div(fixed_from_uint(1), score);
+
+    bpf_printk("score:%lu", score);
+
+    return (score >params->threshold) ? 1 : 0;
 }
 
 /* ================= XDP PROGRAM ================= */
@@ -267,7 +280,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     } else {
         dp->label = 1;
     }
-    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
+    // bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
     return XDP_PASS;
 }
 

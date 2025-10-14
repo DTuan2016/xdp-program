@@ -26,12 +26,13 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* In ra node dưới dạng CSV */
 static void print_node_csv(FILE *f, __u32 key, iTreeNode *node) {
-    fprintf(f, "%u,%d,%d,%u,%d,%u\n",
+    fprintf(f, "%u,%d,%d,%u,%d,%u,%u\n",
             key,
             node->left_idx,
             node->right_idx,
             node->feature_idx,
             node->split_value,
+            node->num_points,
             node->is_leaf);
 }
 
@@ -45,17 +46,17 @@ static void print_flow_csv(FILE *f, struct flow_key *key, data_point *dp) {
     addr1.s_addr = key->dst_ip; // network order
     inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%s,%u,%u,%u,%u,%u,%u,%u,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%f,%f,%f,%f,%f,%d\n",
         ip_str,
         key->src_port,
         ip_dest,
         key->dst_port,
         key->proto,
-        dp->features[0],
-        dp->features[1],
-        dp->features[2],
-        dp->features[3],
-        dp->features[4],
+        fixed_to_float(dp->features[0]),
+        fixed_to_float(dp->features[1]),
+        fixed_to_float(dp->features[2]),
+        fixed_to_float(dp->features[3]),
+        fixed_to_float(dp->features[4]),
         dp->label
     );
 }
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,IsLeaf\n");
+    fprintf(f1, "Key,LeftIdx,RightIdx,Feature,SplitValue,num_points,IsLeaf\n");
     fprintf(f2, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
     dump_nodes_to_csv(map_fd, f1);
     dump_flow_map_to_csv(map_fd1, f2);
