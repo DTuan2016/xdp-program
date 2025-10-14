@@ -68,29 +68,33 @@ int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
         double feature0, feature1, feature2, feature3, feature4;
         int un_label, proto;
         char label_str[32];  // label as string
-        
+
         int n = sscanf(line,
                        "%d,%63[^,],%d,%63[^,],%d,%d,%lf,%lf,%lf,%lf,%lf,%d,%31s",
                        &idx, src_ip, &src_port, dst_ip, &dst_port, &proto,
                        &feature0, &feature1, &feature2,
                        &feature3, &feature4, &un_label, label_str);
 
-        if (n != 13) continue;
+        if (n != 13)
+            continue;
 
-        /* Copy features */
+        /* Only keep BENIGN samples */
+        if (strcmp(label_str, "BENIGN") != 0)
+            continue;
+
+        /* Copy features (log scale, fixed-point) */
         dp.features[0] = fixed_from_float(log2(feature0 + 1.0));
         dp.features[1] = fixed_from_float(log2(feature1 + 1.0));
         dp.features[2] = fixed_from_float(log2(feature2 + 1.0));
         dp.features[3] = fixed_from_float(log2(feature3 + 1.0));
         dp.features[4] = fixed_from_float(log2(feature4 + 1.0));
-        /* Convert label string to int: BENIGN=1, else=0 */
-        if (strcmp(label_str, "BENIGN") == 0)
-            dp.label = 1;
-        else
-            dp.label = 0;
+
+        /* Label always BENIGN=1 */
+        dp.label = 1;
 
         dataset[count++] = dp;
     }
+
     fclose(f);
     return count;
 }
@@ -328,8 +332,8 @@ fixed path_length_point(iTreeNode *nodes, int node_idx, data_point *dp) {
         //        fixed_to_uint(node->split_value));
 
         if (node->is_leaf) {
-            printf("[DEBUG] Reached leaf idx=%d, num_points=%d, length=%f\n",
-                   node_idx, fixed_to_uint(node->num_points), fixed_to_float(length));
+            // printf("[DEBUG] Reached leaf idx=%d, num_points=%d, length=%f\n",
+            //        node_idx, node->num_points, fixed_to_float(length));
             return fixed_add(length, c_factor(node->num_points));
         }
 
@@ -357,7 +361,7 @@ fixed anomaly_score_point(IsolationForest *forest, data_point *dp, __u32 sample_
     }
     fixed avg_path = fixed_div(sum_path, fixed_from_uint(forest->n_trees));
     fixed c_n = c_factor((int)sample_size);
-    printf("avg_path=%u, c_n=%u", avg_path, c_n);
+    // printf("avg_path=%u, c_n=%u\n", avg_path, c_n);
     if (c_n <= fixed_from_float(0.0)) 
     {
         return fixed_from_float(0.0);
@@ -501,14 +505,24 @@ int main(int argc, char **argv) {
     // printf("[DEBUG] Selected threshold_fp=%u, threshold_float=%.6f\n",
     //     params.threshold, fixed_to_float(params.threshold));
 
-    double frac = (double)CONTAMINATION / SCALE; // CONTAMINATION là % (10)
+    double frac = (double)CONTAMINATION / SCALE; // CONTAMINATION là % (ví dụ 10)
     int threshold_index = (int)((1.0 - frac) * train_count);
     if (threshold_index >= train_count) threshold_index = train_count - 1;
     if (threshold_index < 0) threshold_index = 0;
 
-    params.threshold = scores_fp[threshold_index];
-    printf("[DEBUG] Threshold index=%d, threshold_fp=%u, threshold_float=%.6f\n",
-        threshold_index, params.threshold, fixed_to_float(params.threshold));
+    // Tính trung bình từ threshold_index đến hết mảng
+    double sum = 0.0;
+    int count = 0;
+    for (int i = 0; i < threshold_index; i++) {
+        sum += scores_fp[i];
+        count++;
+    }
+    // params.threshold = fixed_from_float(0.75);
+    params.threshold = (count > 0) ? (sum / count) : 0.0;
+    // printf("[DEBUG] Threshold index=%d, threshold_fp=%u, threshold_float=%.6f\n",
+    //     threshold_index, params.threshold, fixed_to_float(params.threshold));
+    printf("[DEBUG] Threshold index=%d, threshold_fp=%u, threshold_float=%u\n",
+    threshold_index, params.threshold, params.threshold);
     if (save_forest_to_map(map_fd_nodes, map_fd_c, map_fd_params, &forest, &params) != 0) {
         fprintf(stderr, "[ERROR] Failed to save forest to maps\n");
         close(map_fd_nodes);

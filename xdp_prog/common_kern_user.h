@@ -7,14 +7,14 @@
 #include <stdint.h>
 #include <math.h>
 /*All of this defines have max accuracy ~93%*/ 
-#define SCALE               1000
+#define SCALE               10000
 #define TRAINING_SET        10000
 #define MAX_FLOW_SAVED      1000
 #define MAX_FEATURES        5
 // Còn 20, 10
-#define MAX_TREES           10
+#define MAX_TREES           20
 #define MAX_NODE_PER_TREE   256
-#define MAX_SAMPLE_PER_NODE 256
+#define MAX_SAMPLE_PER_NODE 512
 #define NULL_IDX            -1
 #define MAX_TEST            300
 #define MAX_DEPTH           9

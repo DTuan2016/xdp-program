@@ -257,7 +257,7 @@ static __always_inline int is_anomaly(data_point *dp)
 
     bpf_printk("score:%lu", score);
 
-    return (score >params->threshold) ? 1 : 0;
+    return (score > params->threshold) ? 1 : 0;
 }
 
 /* ================= XDP PROGRAM ================= */
