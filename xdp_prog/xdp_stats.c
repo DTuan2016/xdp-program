@@ -587,9 +587,9 @@ int dump_forest_to_csv(RandomForest *rf, const char *csv_path)
             __s32 right_idx = (src->right_idx >= 0) ? (__s32)(t * MAX_NODE_PER_TREE + src->right_idx) : -1;
 
             fixed split_value = src->split_value; // Nếu dùng fixed-point thì scale ở đây
-            fprintf(fp, "%u,%u,%d,%d,%d,%f,%d,%d,%d\n",
+            fprintf(fp, "%u,%u,%d,%d,%d,%u,%d,%d,%d\n",
                     key, t, n, left_idx, right_idx,
-                    fixed_to_float(split_value), src->feature_idx, src->is_leaf, src->label);
+                    split_value, src->feature_idx, src->is_leaf, src->label);
             total_nodes++;
         }
     }
@@ -819,6 +819,77 @@ void test_forest_accuracy(RandomForest *rf, data_point *test_data, int test_coun
            (total > 0) ? (double)correct / total * 100.0 : 0.0);
 }
 
+struct forest_params read_params(const char *filename) {
+    struct forest_params params = {0}; // initialize to 0
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        fprintf(stderr, "[ERROR] fopen(%s): %s\n", filename, strerror(errno));
+        return params; // return zeroed struct
+    }
+
+    char line[1024];
+    char *token = NULL;
+
+    // --- Skip header: "n_trees,max_depth,sample_size,min_samples_split"
+    if (!fgets(line, sizeof(line), fp)) {
+        fprintf(stderr, "[ERROR] Missing header in %s\n", filename);
+        fclose(fp);
+        return params;
+    }
+
+    // --- Read parameters line
+    if (fgets(line, sizeof(line), fp)) {
+        if (sscanf(line, "%u,%u,%u,%u",
+                   &params.n_trees,
+                   &params.max_depth,
+                   &params.sample_size,
+                   &params.min_samples_split) != 4) {
+            fprintf(stderr, "[WARN] Failed to parse main parameters\n");
+        }
+    } else {
+        fprintf(stderr, "[ERROR] Missing parameter line in %s\n", filename);
+        fclose(fp);
+        return params;
+    }
+
+    // --- Skip blank line and "min_vals" header
+    if (!fgets(line, sizeof(line), fp)) { fclose(fp); return params; } // blank
+    if (!fgets(line, sizeof(line), fp)) { fclose(fp); return params; } // "min_vals"
+
+    // --- Read min_vals
+    if (fgets(line, sizeof(line), fp)) {
+        token = strtok(line, ",");
+        for (int i = 0; i < MAX_FEATURES && token; i++) {
+            params.min_vals[i] = strtoul(token, NULL, 10);
+            token = strtok(NULL, ",");
+        }
+    } else {
+        fprintf(stderr, "[WARN] Missing min_vals in %s\n", filename);
+    }
+    
+    if (!fgets(line, sizeof(line), fp)) { fclose(fp); return params; } // blank
+    // --- Skip "max_vals" header
+    if (!fgets(line, sizeof(line), fp)) {
+        fprintf(stderr, "[WARN] Missing max_vals header in %s\n", filename);
+        fclose(fp);
+        return params;
+    }
+
+    // --- Read max_vals
+    if (fgets(line, sizeof(line), fp)) {
+        token = strtok(line, ",");
+        for (int i = 0; i < MAX_FEATURES && token; i++) {
+            params.max_vals[i] = strtoul(token, NULL, 10);
+            token = strtok(NULL, ",");
+        }
+    } else {
+        fprintf(stderr, "[WARN] Missing max_vals values in %s\n", filename);
+    }
+
+    fclose(fp);
+    return params;
+}
+
 /*==================== MAIN ====================*/
 int main(int argc, char **argv)
 {
@@ -880,8 +951,26 @@ int main(int argc, char **argv)
 
     // ======== MODE 1: LOAD FROM CSV ========
     if (load_csv_mode) {
+        const char *filename = "/home/dongtv/dtuan/xdp-program/xdp_prog/params.csv";
         printf("[INFO] Loading RandomForest nodes from fixed path: %s\n", CSV_PATH);
         sync_forest_to_map(map_fd_nodes, NULL, CSV_PATH);
+        struct forest_params p = read_params(filename);
+
+        printf("[INFO] Params: trees=%u, depth=%u, sample=%u, min_split=%u\n",
+            p.n_trees, p.max_depth, p.sample_size, p.min_samples_split);
+
+        printf("[INFO] Min vals: ");
+        for (int i = 0; i < MAX_FEATURES; i++) printf("%u ", p.min_vals[i]);
+        printf("\n[INFO] Max vals: ");
+        for (int i = 0; i < MAX_FEATURES; i++) printf("%u ", p.max_vals[i]);
+        printf("\n");
+
+        // Save params
+        __u32 key = 0;
+        if (bpf_map_update_elem(map_fd_params, &key, &p, BPF_ANY) != 0) {
+            fprintf(stderr, "[ERROR] Failed to update xdp_randforest_params: %s\n", strerror(errno));
+            return EXIT_FAILURE;
+        }
         printf("[INFO] Loaded model from CSV successfully.\n");
 
         close(map_fd);
@@ -926,6 +1015,31 @@ int main(int argc, char **argv)
     // Save to map + dump CSV
     sync_forest_to_map(map_fd_nodes, &rf, CSV_PATH);
 
+    const char *filename = "/home/dongtv/dtuan/xdp-program/xdp_prog/params.csv";
+    FILE *f = fopen(filename, "w");
+    if(!f){
+        perror("fopen");
+        return EXIT_FAILURE;
+    }
+
+    fprintf(f, "n_trees,max_depth,sample_size,min_samples_split\n");
+    fprintf(f, "%u,%u,%u,%u\n\n",
+            params.n_trees, params.max_depth,
+            params.sample_size, params.min_samples_split);
+
+        // Dump min_vals
+    fprintf(f, "min_vals\n");
+    for (int i = 0; i < MAX_FEATURES; i++)
+        fprintf(f, "%d%s", params.min_vals[i], (i == MAX_FEATURES-1) ? "\n" : ",");
+
+    fprintf(f, "\n");
+    // Dump max_vals
+    fprintf(f, "max_vals\n");
+    for (int i = 0; i < MAX_FEATURES; i++)
+        fprintf(f, "%d%s", params.max_vals[i], (i == MAX_FEATURES-1) ? "\n" : ",");
+
+    fclose(f);
+    printf("[INFO] Dumped forest_params to %s\n", filename);
     // Save params
     __u32 key = 0;
     if (bpf_map_update_elem(map_fd_params, &key, &params, BPF_ANY) != 0) {
@@ -938,6 +1052,7 @@ int main(int argc, char **argv)
     test_forest_accuracy(&rf, test_dataset, test_count);
 
     printf("[INFO] Model + params successfully updated to BPF maps\n");
+
     printf("[INFO] Forest params: n_trees=%u, max_depth=%u, sample_size=%u, min_samples_split=%u\n",
            params.n_trees, params.max_depth, params.sample_size, params.min_samples_split);
 
