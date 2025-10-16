@@ -106,10 +106,28 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
-/* ================= FEATURE UPDATE ================= */
-static __always_inline void update_feature(data_point *dp)
+static __always_inline void apply_min_max_scale(data_point *dp, const struct forest_params *params)
 {
-    // Cần total_pkts > 1 để tránh chia cho 0
+    if (!params)
+        return;
+
+// #pragma unroll
+    for (int i = 0; i < MAX_FEATURES; i++) {
+        fixed x = dp->features[i];
+        fixed minv = params->min_vals[i];
+        fixed maxv = params->max_vals[i];
+        fixed range = maxv - minv;
+
+        if (range <= 0)
+            dp->features[i] = 0;
+        else
+            dp->features[i] = fixed_div((x - minv), range);
+    }
+}
+
+/* ================= FEATURE UPDATE ================= */
+static __always_inline void update_feature(data_point *dp, const struct forest_params *params)
+{
     if (dp->total_pkts > 1) {
         fixed flow_duration = fixed_log2(dp->flow_duration);
         __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
@@ -120,8 +138,9 @@ static __always_inline void update_feature(data_point *dp)
         dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
         dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
 
-        // Cập nhật flow_IAT_mean cho thông tin debug
-        // dp->flow_IAT_mean = (mean_iat_us > 0) ? fixed_to_uint(fixed_log2(mean_iat_us)) : 0;
+        /* scale only if params provided */
+        if (params)
+            apply_min_max_scale(dp, params);
     }
 }
 
@@ -162,18 +181,15 @@ static __always_inline data_point *update_stats(struct flow_key *key,
 
     dp->last_seen = ts_us;
     dp->flow_duration = dp->last_seen - dp->start_ts;
-    // if (dp->total_pkts > 1) {
-    //     dp->flow_IAT_mean = dp->sum_IAT / (dp->total_pkts - 1);
-    //     dp->pkt_len_mean  = dp->total_bytes / dp->total_pkts;
-    // }
-
-    // dp->flow_duration = dp->last_seen - dp->start_ts;
-    // if (dp->flow_duration > 0) {
-    //     dp->flow_bytes_per_s = (dp->total_bytes * 1000000ULL) / dp->flow_duration;
-    //     dp->flow_pkts_per_s  = (dp->total_pkts  * 1000000ULL) / dp->flow_duration;
-    // }
-
-    update_feature(dp);
+    __u32 pkey = 0;
+    struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &pkey);
+    if (params) {
+        /* verifier now knows params != NULL on the true branch */
+        update_feature(dp, params);
+    } else {
+        /* No params: still update features without scaling (or early return) */
+        update_feature(dp, NULL);
+    }
     return dp;
 }
 

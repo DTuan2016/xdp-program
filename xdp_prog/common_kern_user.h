@@ -43,11 +43,7 @@ typedef struct {
     __u64   sum_IAT;              /* Sum of Inter-Arrival Times */
     /* Feature use for algorithm */
     __u32   flow_duration;        /* Duration of a flow */
-    // __u32   flow_IAT_mean;        /* Mean Inter-Arrival Time */
-    // __u32   flow_pkts_per_s;
-    // __u32   flow_bytes_per_s;
     __u32   pkt_len_mean;
-
     /*
         features[0]: flow_duration      (Log2) 
         features[1]: flow_pkts_per_s    (Log2)
@@ -58,6 +54,7 @@ typedef struct {
     fixed features[MAX_FEATURES];
     int   label;
 } data_point;
+
 /*Definition of a Node of Decision Tree*/
 typedef struct Node{
     int left_idx;
@@ -67,6 +64,7 @@ typedef struct Node{
     __u32 is_leaf;
     __u32 label;
 } Node;
+
 /*Definition of Decision Tree*/
 typedef struct DecisionTree{
     Node        nodes[MAX_NODE_PER_TREE];
@@ -74,6 +72,7 @@ typedef struct DecisionTree{
     int         max_depth;
     int         min_samples_split;
 }DecisionTree;
+
 /*Definitions of Random Forest*/
 typedef struct{
     DecisionTree trees[MAX_TREES];
@@ -81,12 +80,15 @@ typedef struct{
     __u32        max_depth;
     __u32        sample_size;
 }RandomForest;
+
 /*Parameter for random forest -> Save it to map*/
 struct forest_params {
     __u32 n_trees;
     __u32 sample_size;
     __u32 max_depth;
     __u32 min_samples_split;
+    fixed min_vals[MAX_FEATURES];
+    fixed max_vals[MAX_FEATURES];
 };
 
 /* Convert float (as double in user space) to fixed-point */

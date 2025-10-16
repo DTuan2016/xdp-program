@@ -21,84 +21,59 @@
 #include "common_kern_user.h"
 
 static const struct option_wrapper long_options[] = {
-    {{"help", no_argument, NULL, 'h'}, "Show help", false},
+    {{"help", no_argument, NULL, 'h'}, "Show help", NULL, false},
     {{"dev", required_argument, NULL, 'd'}, "Operate on device <ifname>", "<ifname>", true},
-    {{"quiet", no_argument, NULL, 'q'}, "Quiet mode (no output)"},
-    {{0, 0, NULL, 0}}};
-
+    {{"quiet", no_argument, NULL, 'q'}, "Quiet mode (no output)", NULL, false},
+    {{"load-csv", no_argument, NULL, 'c'}, "Load RandomForest from default CSV", NULL, false},
+    {{0, 0, NULL, 0}, NULL, NULL, false}
+};
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
 const char *pin_basedir = "/sys/fs/bpf";
 
+void min_max_scale_fixed(data_point *dataset, int n_samples, int n_feature, struct forest_params *params){
+    fixed min_vals[n_feature];
+    fixed max_vals[n_feature];
+
+    for(int j = 0; j < n_feature; j++){
+        min_vals[j] = UINT32_MAX;
+        max_vals[j] = 0;
+    }
+
+    for (int i = 0; i < n_samples; i++) {
+        for (int j = 0; j < n_feature; j++) {
+            fixed val = dataset[i].features[j];
+            if (val < min_vals[j]) min_vals[j] = val;
+            if (val > max_vals[j]) max_vals[j] = val;
+        }
+    }
+
+    for(int i = 0; i < n_feature; i++){
+        params->min_vals[i] = min_vals[i];
+        params->max_vals[i] = max_vals[i];
+    }
+
+    for (int i = 0; i < n_samples; i++) {
+        for (int j = 0; j < n_feature; j++) {
+            __u32 val = dataset[i].features[j];
+            __u32 range = max_vals[j] - min_vals[j];
+            if (range > 0) {
+                // scaled = (val - min) / range
+                // => fixed = ((val - min) << 24) / range
+                fixed scaled = fixed_div(fixed_sub(val, min_vals[j]), range);
+                // fixed scaled = ((__s64)(val - min_vals[j]) << 24) / range;
+                dataset[i].features[j] = scaled;
+            } else {
+                dataset[i].features[j] = 0;
+            }
+        }
+    }
+}
+
 /*==================== CSV Reading ====================*/
-// int read_csv_dataset(const char *filename, data_point *dataset, int max_rows) {
-//     FILE *f = fopen(filename, "r");
-//     if (!f) {
-//         fprintf(stderr, "[ERROR] Cannot open file: %s\n", filename);
-//         return -1;
-//     }
-
-//     char line[1024];
-//     int count = 0;
-
-//     /* Skip header */
-//     if (!fgets(line, sizeof(line), f)) {
-//         fclose(f);
-//         return 0;
-//     }
-
-//     while (fgets(line, sizeof(line), f) && count < max_rows) {
-//         data_point dp = {0};
-//         int index, src_port;
-//         char src_ip[64];
-//         double flow_duration, flow_bytes_per_s, flow_pkts_per_s, len_fwd_pkts;
-//         double len_bwd_pkts, flow_IAT_mean;
-//         int label;
-
-//         int n = sscanf(line,
-//                        "%d,%63[^,],%d,%lf,%lf,%lf,%lf,%lf,%lf,%d",
-//                        &index, src_ip, &src_port,
-//                        &flow_duration, &flow_bytes_per_s, &flow_pkts_per_s,
-//                        &len_fwd_pkts, &len_bwd_pkts, &flow_IAT_mean,
-//                        &label);
-
-//         if (n != 10) continue;
-
-//         // Calculate features correctly
-//         double total_length = len_fwd_pkts + len_bwd_pkts;
-
-//         dp.flow_duration    = (__u64)(flow_duration); // Convert to microseconds (assumption)
-//         dp.total_bytes      = (__u64)total_length;
-//         dp.flow_IAT_mean    = (__u32)(flow_IAT_mean); // Convert to microseconds (assumption)
-//         dp.pkt_len_mean     = len_bwd_pkts + len_fwd_pkts;
-
-//         // Calculate per-second rates
-//         dp.flow_pkts_per_s  = flow_pkts_per_s;
-//         dp.flow_bytes_per_s = flow_bytes_per_s;
-
-//         /* Copy to dp.features[] - order must match kernel */
-//         dp.features[0] = (__u32)dp.flow_duration;
-//         dp.features[1] = dp.flow_pkts_per_s;
-//         dp.features[2] = dp.pkt_len_mean;
-//         dp.features[3] = dp.flow_IAT_mean;
-//         dp.features[4] = dp.flow_bytes_per_s;
-
-//         dp.label = label;
-//         dataset[count++] = dp;
-
-//         if (count <= 5) { // Print first few for debugging
-//             printf("Sample %d: duration=%u, pkts/s=%u, mean_len=%u, IAT=%u, bytes/s=%u, label=%d\n",
-//                    count, dp.features[0], dp.features[1], dp.features[2],
-//                    dp.features[3], dp.features[4], dp.label);
-//         }
-//     }
-//     fclose(f);
-//     return count;
-// }
-
-int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
+int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows, struct forest_params *params) {
     FILE *f = fopen(filename, "r");
     if (!f) {
         fprintf(stderr, "[ERROR] Cannot open file: %s\n", filename);
@@ -138,11 +113,6 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
         dp.features[2] = fixed_from_float(log2(feature2 + 1.0));
         dp.features[3] = fixed_from_float(log2(feature3 + 1.0));
         dp.features[4] = fixed_from_float(log2(feature4 + 1.0));
-        // dp.features[0] = feature0;
-        // dp.features[1] = feature1;
-        // dp.features[2] = feature2;
-        // dp.features[3] = feature3;
-        // dp.features[4] = feature4;
         
         /* Convert label string to int: BENIGN=1, else=0 */
         if (strcmp(label_str, "BENIGN") == 0)
@@ -151,14 +121,9 @@ int read_csv_dataset1(const char *filename, data_point *dataset, int max_rows) {
             dp.label = 0;
 
         dataset[count++] = dp;
-
-        // if (count <= 5) { // Print first few for debugging
-        //     printf("Sample %d: duration=%.0f, pkts/s=%.0f, mean_len=%.0f, IAT=%.0f, bytes/s=%.0f, label=%d\n",
-        //            count, dp.features[0], dp.features[1], dp.features[2], 
-        //            dp.features[3], dp.features[4], dp.label);
-        // }
     }
     fclose(f);
+    min_max_scale_fixed(dataset, count, MAX_FEATURES, params);
     return count;
 }
 
@@ -596,6 +561,86 @@ void reindex_tree(DecisionTree *tree)
     free(new_nodes);
 }
 
+int dump_forest_to_csv(RandomForest *rf, const char *csv_path)
+{
+    if (!rf) return -1;
+
+    FILE *fp = fopen(csv_path, "w");
+    if (!fp) {
+        fprintf(stderr, "[ERROR] Cannot open '%s' for writing: %s\n", csv_path, strerror(errno));
+        return -1;
+    }
+
+    fprintf(fp, "global_idx,tree_idx,node_idx,left_idx,right_idx,split_value,feature_idx,is_leaf,label\n");
+
+    int total_nodes = 0;
+
+    for (__u32 t = 0; t < rf->n_trees && t < MAX_TREES; t++) {
+        DecisionTree *tree = &rf->trees[t];
+        reindex_tree(tree);
+
+        for (int n = 0; n < tree->node_count && n < MAX_NODE_PER_TREE; n++) {
+            __u32 key = t * MAX_NODE_PER_TREE + n;
+            Node *src = &tree->nodes[n];
+
+            __s32 left_idx = (src->left_idx >= 0) ? (__s32)(t * MAX_NODE_PER_TREE + src->left_idx) : -1;
+            __s32 right_idx = (src->right_idx >= 0) ? (__s32)(t * MAX_NODE_PER_TREE + src->right_idx) : -1;
+
+            fixed split_value = src->split_value; // Nếu dùng fixed-point thì scale ở đây
+            fprintf(fp, "%u,%u,%d,%d,%d,%f,%d,%d,%d\n",
+                    key, t, n, left_idx, right_idx,
+                    fixed_to_float(split_value), src->feature_idx, src->is_leaf, src->label);
+            total_nodes++;
+        }
+    }
+
+    fclose(fp);
+    printf("[INFO] Dumped %d nodes to %s\n", total_nodes, csv_path);
+    return 0;
+}
+
+int load_csv_to_map(int map_fd, const char *csv_path)
+{
+    FILE *fp = fopen(csv_path, "r");
+    if (!fp) {
+        fprintf(stderr, "[ERROR] Cannot open '%s' for reading: %s\n", csv_path, strerror(errno));
+        return -1;
+    }
+
+    char line[256];
+    int total_nodes = 0;
+
+    // Bỏ qua header (nếu có)
+    if (!fgets(line, sizeof(line), fp)) {
+        fprintf(stderr, "[WARN] Empty CSV file: %s\n", csv_path);
+        fclose(fp);
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), fp)) {
+        __u32 key;
+        Node tmp = {0};
+
+        int parsed = sscanf(line, "%u,%*u,%*d,%d,%d,%u,%d,%u,%d",
+                            &key, &tmp.left_idx, &tmp.right_idx, &tmp.split_value,
+                            &tmp.feature_idx, &tmp.is_leaf, &tmp.label);
+        if (parsed < 7)
+            continue;
+
+        if (bpf_map_update_elem(map_fd, &key, &tmp, BPF_ANY) < 0) {
+            fprintf(stderr, "[ERROR] Update map failed (key=%u): %s\n", key, strerror(errno));
+            fclose(fp);
+            return -1;
+        }
+
+        total_nodes++;
+    }
+
+    fclose(fp);
+    printf("[INFO] Loaded %d nodes from %s into BPF map\n", total_nodes, csv_path);
+    return total_nodes;
+}
+
 int save_forest_to_map(int map_fd, RandomForest *rf)
 {
     if (!rf)
@@ -656,6 +701,54 @@ int save_forest_to_map(int map_fd, RandomForest *rf)
 
     printf("[INFO] Successfully saved %d nodes to BPF map\n", total_nodes);
     return 0;
+}
+
+int sync_forest_to_map(int map_fd, RandomForest *rf, const char *csv_path)
+{
+    if (!csv_path || map_fd < 0) {
+        fprintf(stderr, "[ERROR] Invalid arguments to sync_forest_to_map()\n");
+        return -1;
+    }
+
+    int ret = 0;
+
+    /* =====================================================
+     * CASE 1: TRAIN MODE - Có rf => dump + save
+     * ===================================================== */
+    if (rf != NULL) {
+        printf("[INFO] [TRAIN MODE] Start syncing RandomForest...\n");
+
+        // 1. Dump forest ra CSV
+        ret = dump_forest_to_csv(rf, csv_path);
+        if (ret < 0) {
+            fprintf(stderr, "[ERROR] dump_forest_to_csv() failed\n");
+            return -1;
+        }
+
+        // 2. Lưu trực tiếp forest vào BPF map
+        ret = save_forest_to_map(map_fd, rf);
+        if (ret < 0) {
+            fprintf(stderr, "[ERROR] save_forest_to_map() failed\n");
+            return -1;
+        }
+
+        printf("[INFO] [TRAIN MODE] Sync completed: %d nodes saved to map and CSV\n", ret);
+        return ret;
+    }
+
+    /* =====================================================
+     * CASE 2: LOAD MODE - Không có rf => chỉ đọc CSV
+     * ===================================================== */
+    printf("[INFO] [LOAD MODE] Loading nodes from CSV into BPF map...\n");
+
+    ret = load_csv_to_map(map_fd, csv_path);
+    if (ret < 0) {
+        fprintf(stderr, "[ERROR] load_csv_to_map() failed\n");
+        return -1;
+    }
+
+    printf("[INFO] [LOAD MODE] Loaded %d nodes into map from CSV\n", ret);
+    return ret;
 }
 
 /*==================== Testing Functions ====================*/
@@ -736,19 +829,22 @@ int main(int argc, char **argv)
     int len;
 
     struct config cfg = {.ifindex = -1, .do_unload = false};
-    const char *__doc__ = "Train RandomForest and load into XDP BPF maps\n";
+    const char *__doc__ =
+        "Train or Load RandomForest and sync into XDP BPF maps\n"
+        "Usage:\n"
+        "  --dev <iface>\n"
+        "  [--load-csv] : load from fixed CSV path instead of training\n";
+
     parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
 
-    if (cfg.ifindex == -1)
-    {
+    if (cfg.ifindex == -1) {
         fprintf(stderr, "ERR: required option --dev missing\n");
         usage(argv[0], __doc__, long_options, (argc == 1));
         return EXIT_FAIL_OPTION;
     }
 
     len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, cfg.ifname);
-    if (len < 0)
-    {
+    if (len < 0) {
         fprintf(stderr, "ERR: creating pin dirname\n");
         return EXIT_FAIL_OPTION;
     }
@@ -759,77 +855,94 @@ int main(int argc, char **argv)
         return EXIT_FAIL_BPF;
 
     map_fd_nodes = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
-    if (map_fd_nodes < 0)
-    {
+    if (map_fd_nodes < 0) {
         fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_randforest_nodes'\n", pin_dir);
         return EXIT_FAIL_BPF;
     }
 
     map_fd_params = open_bpf_map_file(pin_dir, "xdp_randforest_params", &info);
-    if (map_fd_params < 0)
-    {
+    if (map_fd_params < 0) {
         fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_randforest_params'\n", pin_dir);
         return EXIT_FAIL_BPF;
     }
 
-    // Load dataset
-    data_point train_dataset[TRAINING_SET];
-    int train_count = read_csv_dataset1("/home/dongtv/dtuan/training_isolation/data.csv",
-                                        train_dataset, TRAINING_SET);
-    if (train_count < 1)
-    {
-        fprintf(stderr, "[ERROR] Training dataset empty or invalid\n");
-        return EXIT_FAILURE;
-    }
-    printf("[INFO] Loaded %d training samples\n", train_count);
+    // ======== CỐ ĐỊNH ĐƯỜNG DẪN CSV ========
+    const char *CSV_PATH = "/home/dongtv/dtuan/xdp-program/xdp_prog/forest_nodes.csv";
 
-    // Initialize RandomForest parameters
-    RandomForest rf = {0};
+    // ======== KIỂM TRA FLAG --load-csv ========
+    bool load_csv_mode = false;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--load-csv") == 0) {
+            load_csv_mode = true;
+            break;
+        }
+    }
+
+    // ======== MODE 1: LOAD FROM CSV ========
+    if (load_csv_mode) {
+        printf("[INFO] Loading RandomForest nodes from fixed path: %s\n", CSV_PATH);
+        sync_forest_to_map(map_fd_nodes, NULL, CSV_PATH);
+        printf("[INFO] Loaded model from CSV successfully.\n");
+
+        close(map_fd);
+        close(map_fd_nodes);
+        close(map_fd_params);
+        return EXIT_SUCCESS;
+    }
+
+    // ======== MODE 2: TRAIN FROM DATASET ========
+    printf("[INFO] Training new RandomForest model...\n");
+
+    // Load dataset
+    data_point full_dataset[TRAINING_SET];
     struct forest_params params = {
         .n_trees = MAX_TREES,
-        .max_depth = MAX_TREE_DEPTH, // Reasonable depth
-        .sample_size = (train_count > MAX_SAMPLES_PER_NODE) ? MAX_SAMPLES_PER_NODE : train_count,
+        .max_depth = MAX_TREE_DEPTH,
+        .sample_size = MAX_SAMPLES_PER_NODE,
         .min_samples_split = MIN_SPLIT_SAMPLES};
 
-    // Train RandomForest
-    printf("[INFO] Starting RandomForest training...\n");
+    int total_count = read_csv_dataset1(
+        "/home/dongtv/dtuan/training_isolation/data.csv",
+        full_dataset, TRAINING_SET, &params);
+    if (total_count < 1) {
+        fprintf(stderr, "[ERROR] Dataset empty or invalid\n");
+        return EXIT_FAILURE;
+    }
+
+    // Split 80/20
+    int train_count = (int)(total_count * 0.8);
+    int test_count = total_count - train_count;
+    data_point *train_dataset = full_dataset;
+    data_point *test_dataset  = &full_dataset[train_count];
+    printf("[INFO] Split dataset: train=%d, test=%d (ratio 80/20)\n",
+           train_count, test_count);
+
+    // Init RandomForest
+    RandomForest rf = {0};
+    // Train
     train_random_forest(&rf, train_dataset, train_count, &params);
     printf("[INFO] RandomForest trained with %u trees\n", rf.n_trees);
 
-    // Save to BPF maps (reindex each tree locally before saving)
-    if (save_forest_to_map(map_fd_nodes, &rf) != 0)
-    {
-        fprintf(stderr, "[ERROR] Failed to update xdp_randforest_nodes\n");
-        return EXIT_FAILURE;
-    }
+    // Save to map + dump CSV
+    sync_forest_to_map(map_fd_nodes, &rf, CSV_PATH);
 
+    // Save params
     __u32 key = 0;
-    if (bpf_map_update_elem(map_fd_params, &key, &params, BPF_ANY) != 0)
-    {
+    if (bpf_map_update_elem(map_fd_params, &key, &params, BPF_ANY) != 0) {
         fprintf(stderr, "[ERROR] Failed to update xdp_randforest_params: %s\n", strerror(errno));
         return EXIT_FAILURE;
     }
 
-    data_point test_dataset[MAX_FLOW_SAVED];
-    int test_count = read_csv_dataset1("/home/dongtv/dtuan/training_isolation/data.csv",
-                                       test_dataset, MAX_FLOW_SAVED);
-    if (test_count < 1)
-    {
-        fprintf(stderr, "[ERROR] Testing dataset empty or invalid\n");
-        return EXIT_FAILURE;
-    }
-    printf("[INFO] Loaded %d testing samples\n", test_count);
+    // Evaluate on test set
+    printf("[INFO] Evaluating accuracy on test set...\n");
+    test_forest_accuracy(&rf, test_dataset, test_count);
 
-    test_forest_accuracy(&rf, test_dataset, MAX_FLOW_SAVED);
-
-    printf("[INFO] Successfully updated BPF maps\n");
+    printf("[INFO] Model + params successfully updated to BPF maps\n");
     printf("[INFO] Forest params: n_trees=%u, max_depth=%u, sample_size=%u, min_samples_split=%u\n",
            params.n_trees, params.max_depth, params.sample_size, params.min_samples_split);
 
-    // Close map file descriptors
     close(map_fd);
     close(map_fd_nodes);
     close(map_fd_params);
-
     return EXIT_SUCCESS;
 }
