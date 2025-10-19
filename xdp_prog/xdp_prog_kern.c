@@ -106,27 +106,45 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
-static __always_inline void apply_min_max_scale(data_point *dp, const struct forest_params *params)
-{
-    if (!params)
-        return;
+// static __always_inline void apply_min_max_scale(data_point *dp, const struct forest_params *params)
+// {
+//     if (!params)
+//         return;
 
-// #pragma unroll
-    for (int i = 0; i < MAX_FEATURES; i++) {
-        fixed x = dp->features[i];
-        fixed minv = params->min_vals[i];
-        fixed maxv = params->max_vals[i];
-        fixed range = maxv - minv;
+// // #pragma unroll
+//     for (int i = 0; i < MAX_FEATURES; i++) {
+//         fixed x = dp->features[i];
+//         fixed minv = params->min_vals[i];
+//         fixed maxv = params->max_vals[i];
+//         fixed range = maxv - minv;
 
-        if (range <= 0)
-            dp->features[i] = 0;
-        else
-            dp->features[i] = fixed_div((x - minv), range);
-    }
-}
+//         if (range <= 0)
+//             dp->features[i] = 0;
+//         else
+//             dp->features[i] = fixed_div((x - minv), range);
+//     }
+// }
 
-/* ================= FEATURE UPDATE ================= */
-static __always_inline void update_feature(data_point *dp, const struct forest_params *params)
+// /* ================= FEATURE UPDATE ================= */
+// static __always_inline void update_feature(data_point *dp, const struct forest_params *params)
+// {
+//     if (dp->total_pkts > 1) {
+//         fixed flow_duration = fixed_log2(dp->flow_duration);
+//         __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
+
+//         dp->features[0] = flow_duration;
+//         dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - flow_duration;
+//         dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
+//         dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
+//         dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
+
+//         /* scale only if params provided */
+//         if (params)
+//             apply_min_max_scale(dp, params);
+//     }
+// }
+
+static __always_inline void update_feature(data_point *dp)
 {
     if (dp->total_pkts > 1) {
         fixed flow_duration = fixed_log2(dp->flow_duration);
@@ -137,10 +155,6 @@ static __always_inline void update_feature(data_point *dp, const struct forest_p
         dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
         dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
         dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
-
-        /* scale only if params provided */
-        if (params)
-            apply_min_max_scale(dp, params);
     }
 }
 
@@ -181,15 +195,16 @@ static __always_inline data_point *update_stats(struct flow_key *key,
 
     dp->last_seen = ts_us;
     dp->flow_duration = dp->last_seen - dp->start_ts;
-    __u32 pkey = 0;
-    struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &pkey);
-    if (params) {
-        /* verifier now knows params != NULL on the true branch */
-        update_feature(dp, params);
-    } else {
-        /* No params: still update features without scaling (or early return) */
-        update_feature(dp, NULL);
-    }
+    // __u32 pkey = 0;
+    // struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &pkey);
+    // if (params) {
+    //     /* verifier now knows params != NULL on the true branch */
+    //     update_feature(dp, params);
+    // } else {
+    //     /* No params: still update features without scaling (or early return) */
+    //     update_feature(dp, NULL);
+    // }
+    update_feature(dp);
     return dp;
 }
 
