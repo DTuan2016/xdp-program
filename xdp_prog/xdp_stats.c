@@ -20,26 +20,29 @@
 #include "../common/common_user_bpf_xdp.h"
 #include "common_kern_user.h"
 
-static const struct option_wrapper long_options[] = {
-    {{"help", no_argument, NULL, 'h'}, "Show help", false},
-    {{"dev", required_argument, NULL, 'd'}, "Operate on device <ifname>", "<ifname>", true},
-    {{"quiet", no_argument, NULL, 'q'}, "Quiet mode (no output)"},
-    {{0, 0, NULL, 0}}
-};
+// static const struct option_wrapper long_options[] = {
+//     {{"help", no_argument, NULL, 'h'}, "Show help", false},
+//     {{"dev", required_argument, NULL, 'd'}, "Operate on device <ifname>", "<ifname>", true},
+//     {{"quiet", no_argument, NULL, 'q'}, "Quiet mode (no output)"},
+//     {{0, 0, NULL, 0}}
+// };
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
-// const char *pin_basedir = "/sys/fs/bpf";
-
 #define MAP_PATH "/sys/fs/bpf/eno3/svm_map"
 
+// Đảm bảo định nghĩa svm_weight như sau:
+// typedef struct {
+//     __s32 value;   // fixed-point
+//     __u8 is_neg;   // 1 nếu âm
+// } svm_weight;
 
 int main() {
-    FILE *fp = fopen("/home/dongtv/userspace_test/weights.csv", "r");
+    FILE *fp = fopen("/home/dongtv/userspace_test/model/svm_weight.csv", "r");
     if (!fp) {
-        perror("fopen weights.csv");
+        perror("fopen svm_weight.csv");
         return 1;
     }
 
@@ -50,21 +53,47 @@ int main() {
         return 1;
     }
 
-    char line[64];
-    int idx = 0;
-    while (fgets(line, sizeof(line), fp)) {
-        int value = atoi(line);   // đọc số nguyên từ CSV
-        if (bpf_map_update_elem(map_fd, &idx, &value, BPF_ANY) < 0) {
-            fprintf(stderr, "Failed to update map at key %d: %s\n",
-                    idx, strerror(errno));
-            fclose(fp);
-            return 1;
+    char line[1024];
+    if (!fgets(line, sizeof(line), fp)) {
+        fprintf(stderr, "Empty CSV file\n");
+        fclose(fp);
+        return 1;
+    }
+
+    // CSV có dạng: w0,w1,w2,...,bias
+    double features[MAX_FEATURES + 1] = {0};
+    int count = 0;
+
+    // Parse từng giá trị ngăn cách bởi dấu phẩy
+    char *token = strtok(line, ",");
+    while (token && count < MAX_FEATURES + 1) {
+        features[count++] = atof(token);
+        token = strtok(NULL, ",");
+    }
+
+    if (count == 0) {
+        fprintf(stderr, "No values parsed from CSV\n");
+        fclose(fp);
+        return 1;
+    }
+
+    svm_weight weights[MAX_FEATURES + 1];
+
+    for (int i = 0; i < count; i++) {
+        weights[i].is_neg = (features[i] < 0) ? 1 : 0;
+        weights[i].value = fixed_from_float(fabs(features[i]));
+    }
+
+    // Ghi từng phần tử vào BPF map
+    for (int i = 0; i < count; i++) {
+        if (bpf_map_update_elem(map_fd, &i, &weights[i], BPF_ANY) != 0) {
+            fprintf(stderr, "Failed to update index %d: %s\n", i, strerror(errno));
+        } else {
+            printf("[+] Updated map index %d: value=%d, neg=%d\n",
+                   i, weights[i].value, weights[i].is_neg);
         }
-        printf("Updated key=%d, value=%d\n", idx, value);
-        idx++;
     }
 
     fclose(fp);
-    printf("Done. Updated %d entries into map.\n", idx);
     return 0;
 }
