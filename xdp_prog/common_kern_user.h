@@ -302,19 +302,55 @@ static inline fixed fixed_min(fixed a, fixed b) { return (a < b) ? a : b; }
 static inline fixed fixed_max(fixed a, fixed b) { return (a > b) ? a : b; }
 
 /* Fixed-point log2 approximation Q8.24 */
+// static __always_inline fixed fixed_log2(__u32 x)
+// {
+//     if (x == 0) return 0;
+
+//     __u32 int_part = 0;
+//     __u32 tmp = x;
+//     while (tmp >>= 1) int_part++;
+
+//     __u32 base = 1 << int_part;
+//     __u64 remainder = (__u64)x - base;
+//     __u64 frac = (remainder << FIXED_SHIFT) / base;
+
+//     return ((fixed)int_part << FIXED_SHIFT) + (fixed)frac;
+// }
+
 static __always_inline fixed fixed_log2(__u32 x)
 {
-    if (x == 0) return 0;
+    if (x == 0)
+        return 0;
 
-    __u32 int_part = 0;
+    // ==== Tính phần nguyên của log2(x) ====
     __u32 tmp = x;
-    while (tmp >>= 1) int_part++;
+    __u32 int_part = 0;
+// #pragma unroll
+    for (int i = 0; i < 32; i++) {
+        if (tmp >>= 1)
+            int_part++;
+        else
+            break;
+    }
 
-    __u32 base = 1 << int_part;
+    __u32 base = 1u << int_part;
+
+    // ==== Tính phần lẻ f = (x / base) - 1  ====
     __u64 remainder = (__u64)x - base;
-    __u64 frac = (remainder << FIXED_SHIFT) / base;
+    fixed f = (fixed)((remainder << FIXED_SHIFT) / base);  // f ∈ [0, 1)
 
-    return ((fixed)int_part << FIXED_SHIFT) + (fixed)frac;
+    // ==== log2(1 + f) ≈ f - f²/2 + f³/3  (Taylor 3 bậc) ====
+    fixed f2 = fixed_mul(f, f);
+    fixed f3 = fixed_mul(f2, f);
+
+    fixed term1 = f;
+    fixed term2 = f2 >> 1;  // f² / 2
+    fixed term3 = fixed_div(f3, (3 << FIXED_SHIFT));  // f³ / 3
+
+    fixed frac_log = term1 - term2 + term3;
+
+    // ==== Tổng hợp phần nguyên + phần lẻ ====
+    return ((fixed)int_part << FIXED_SHIFT) + frac_log;
 }
 
 typedef struct svm_weight {

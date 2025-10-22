@@ -148,12 +148,15 @@
 #define PATH_MAX 4096
 #endif
 
-#define MAP_PATH_SVM "/sys/fs/bpf/eno3/svm_map"
+// #define MAP_PATH_SVM "/sys/fs/bpf/eno3/svm_map"
+#define MAP_PATH_SVM "/sys/fs/bpf/enp1s0f0/svm_map"
 
 int main(void)
 {
-    const char *weight_path = "/home/dongtv/userspace_test/model/svm_weight.csv";
-    const char *minmax_path = "/home/dongtv/userspace_test/model/minmax_params.csv";
+    // const char *weight_path = "/home/dongtv/userspace_test/model/svm_weight.csv";
+    // const char *minmax_path = "/home/dongtv/userspace_test/model/minmax_params.csv";
+    const char *weight_path = "/home/lanforge/xdp-program/svm_weight.csv";
+    const char *minmax_path = "/home/lanforge/xdp-program/minmax_params.csv";
 
     FILE *fp_weight = fopen(weight_path, "r");
     FILE *fp_minmax = fopen(minmax_path, "r");
@@ -198,6 +201,9 @@ int main(void)
         double min_val, max_val;
         if (sscanf(line, "%d,%lf,%lf", &fidx, &min_val, &max_val) == 3) {
             if (fidx >= 0 && fidx < MAX_FEATURES) {
+                if (min_val != 0){
+                    min_val -= 5;
+                }
                 w_struct.min_vals[fidx] = fixed_from_float(min_val);
                 w_struct.max_vals[fidx] = fixed_from_float(max_val);
             }
