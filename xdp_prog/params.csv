@@ -1,8 +1,0 @@
-n_trees,max_depth,sample_size,min_samples_split
-60,8,512,2
-
-min_vals
-0,0,0,0,0
-
-max_vals
-0,0,0,0,0
