@@ -68,6 +68,7 @@ static const struct option_wrapper long_options[] = {
 
 const char *pin_basedir =  "/sys/fs/bpf";
 const char *map_name    =  "xdp_flow_tracking";
+const char *qs_forest_map_name = "qs_forest";
 
 /* Pinning maps under /sys/fs/bpf in subdir */
 int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
@@ -116,13 +117,16 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 int main(int argc, char **argv)
 {
 	struct xdp_program *program;
-	int err;
+	struct bpf_map_info info = {0};
+	char pin_dir[100];
+	int err, len, qs_model_map_fd, key = 0;
 
 	struct config cfg = {
 		.attach_mode = XDP_MODE_NATIVE,
 		.ifindex     = -1,
 		.do_unload   = false,
 	};
+
 	/* Set default BPF-ELF object file and BPF program name */
 	strncpy(cfg.filename, default_filename, sizeof(cfg.filename));
 	/* Cmdline options can change progname */
@@ -134,6 +138,13 @@ int main(int argc, char **argv)
 		usage(argv[0], __doc__, long_options, (argc == 1));
 		return EXIT_FAIL_OPTION;
 	}
+
+	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, cfg.ifname);
+	if (len < 0) {
+		fprintf(stderr, "ERR: creating pin dirname\n");
+		return EXIT_FAIL_OPTION;
+	}
+	memcpy(cfg.pin_dir, pin_dir, sizeof(pin_dir)); 
 
 	program = load_bpf_and_xdp_attach(&cfg);
 	if (!program)
@@ -153,5 +164,28 @@ int main(int argc, char **argv)
 		return err;
 	}
 
-	return EXIT_OK;
+    if (len < 0) {
+        fprintf(stderr, "ERR: creating pin dirname\n");
+        return EXIT_FAIL_OPTION;
+    }
+	qs_model_map_fd = open_bpf_map_file(pin_dir, "xdp_randforest_params", &info);
+    if (qs_model_map_fd < 0) {
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_randforest_params'\n", pin_dir);
+        return EXIT_FAIL_BPF;
+    }
+	/* Load QS model data into the map */
+	struct qsDataStruct qs_model;
+    __builtin_memset(&qs_model, 0, sizeof(qs_model));
+    __builtin_memcpy(qs_model.threshold, _qs_threshold, sizeof(qs_model.threshold));
+    __builtin_memcpy(qs_model.bitvectors, _qs_bitvectors, sizeof(qs_model.bitvectors));
+    __builtin_memset(qs_model.v, 0xFF, sizeof(qs_model.v));
+    __builtin_memcpy(qs_model.tree_ids, _qs_tree_ids, sizeof(qs_model.tree_ids));
+    __builtin_memcpy(qs_model.num_leaves_per_tree,
+                     _qs_num_leaves_per_tree, sizeof(qs_model.num_leaves_per_tree));
+    __builtin_memcpy(qs_model.leaves, _qs_leaves, sizeof(qs_model.leaves));
+
+	err = bpf_map_update_elem(qs_model_map_fd, &key, &qs_model, BPF_ANY);
+	if (err) {
+		return EXIT_OK;
+	}
 }
