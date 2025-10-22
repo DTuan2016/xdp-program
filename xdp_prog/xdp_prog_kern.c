@@ -22,9 +22,9 @@
 // SVM weights + bias: 5 features + 1 bias
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, MAX_FEATURES + 1);
+    __uint(max_entries, 1);
     __type(key, __u32);
-    __type(value, fixed);
+    __type(value, svm_weight);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } svm_map SEC(".maps");
 
@@ -76,7 +76,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
     key->src_ip = iph->saddr;
     key->dst_ip = iph->daddr;
-    key->proto = iph->protocol;
+    key->proto  = iph->protocol;
     
     transport_data = (__u8 *)iph + ip_header_len;
 
@@ -106,18 +106,45 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
+static __always_inline void apply_min_max_scale(data_point *dp, const svm_weight *params)
+{
+    if (!params)
+        return;
+
+// #pragma unroll
+    for (int i = 0; i < MAX_FEATURES; i++) {
+        fixed x = dp->features[i];
+        fixed minv = params->min_vals[i];
+        fixed maxv = params->max_vals[i];
+        if (x < minv) x = minv;
+        if (x > maxv) x = maxv;
+        fixed range = maxv - minv;
+
+        if (range <= 0)
+        {
+            bpf_printk("Range of feature[%d] < 0", i);
+            dp->features[i] = 0;
+        
+        }else{
+            dp->features[i] = fixed_div((x - minv), range);
+        }   
+    }
+}
+
 /* ================= FEATURE UPDATE ================= */
-static __always_inline void update_feature(data_point *dp)
+static __always_inline void update_feature(data_point *dp, const svm_weight *params)
 {
     if(dp->total_pkts <= 1){
         return;
     }
 
-    dp->features[0] = fixed_log2(dp->flow_duration);
+    dp->features[0] = fixed_log2(dp->flow_duration + 1);
     dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - dp->features[0];
     dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - dp->features[0];
-    dp->features[3] = fixed_log2(dp->sum_IAT) - fixed_log2(dp->total_pkts - 1);
+    dp->features[3] = fixed_log2(dp->sum_IAT + 1) - fixed_log2(dp->total_pkts - 1);
     dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
+
+    apply_min_max_scale(dp, params);
 }
 
 /* ================= FLOW STATS ================= */
@@ -139,52 +166,114 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return NULL;
 
-        // Phải lookup lại để có con trỏ hợp lệ nếu update thành công
         return bpf_map_lookup_elem(&xdp_flow_tracking, key); 
     }
 
-    __u64 iat_ns = (dp->last_seen > 0 && ts_us >= dp->last_seen) ? ts_us - dp->last_seen : 0;
+    __u64 iat_us = (dp->last_seen > 0 && ts_us >= dp->last_seen) ? ts_us - dp->last_seen : 0;
 
     lock_xadd(&dp->total_pkts, 1);
     lock_xadd(&dp->total_bytes, pkt_len);
 
-    if (iat_ns > 0)
-        lock_xadd(&dp->sum_IAT, iat_ns);
+    if (iat_us > 0)
+        lock_xadd(&dp->sum_IAT, iat_us);
 
     dp->last_seen = ts_us;
     dp->flow_duration = dp->last_seen - dp->start_ts;
-    update_feature(dp);
+    __u32 pkey = 0;
+    svm_weight *params = bpf_map_lookup_elem(&svm_map, &pkey);
+    if (params) {
+        update_feature(dp, params);
+    } else {
+        update_feature(dp, NULL);
+    }
     return dp;
 }
 
-/* ================= SVM CALCULATION (LOOP UNROLLED) ================= */
+// static __always_inline int32_t calculate_svm(data_point *dp)
+// {
+//     __u32 idx = 0;
+//     svm_weight *w = bpf_map_lookup_elem(&svm_map, &idx);
+//     if (!w) return 0;
+
+//     __u32 dot = 0;        // giá trị tuyệt đối
+//     __u8 dot_is_neg = 0;  // 0 = dương, 1 = âm
+
+// #pragma unroll
+//     for (int i = 0; i < MAX_FEATURES; i++) {
+//         __u32 term = fixed_mul(w->value[i], dp->features[i]);
+
+//         if (w->is_neg[i]) {
+//             // term âm
+//             if (dot_is_neg)
+//                 dot += term;       // -|D| - |T| = -(|D|+|T|)
+//             else {
+//                 if (dot < term) {
+//                     dot = term - dot;
+//                     dot_is_neg = 1;
+//                 } else {
+//                     dot -= term;
+//                 }
+//             }
+//         } else {
+//             // term dương
+//             if (dot_is_neg) {
+//                 if (dot < term) {
+//                     dot = term - dot;
+//                     dot_is_neg = 0;
+//                 } else {
+//                     dot -= term;
+//                 }
+//             } else {
+//                 dot += term;
+//             }
+//         }
+//     }
+
+//     // Bias ở value[MAX_FEATURES]
+//     __u32 bias = w->value[MAX_FEATURES];
+//     if (w->is_neg[MAX_FEATURES]) {
+//         if (dot_is_neg)
+//             dot += bias;
+//         else {
+//             if (dot < bias) {
+//                 dot = bias - dot;
+//                 dot_is_neg = 1;
+//             } else {
+//                 dot -= bias;
+//             }
+//         }
+//     } else {
+//         if (dot_is_neg) {
+//             if (dot < bias) {
+//                 dot = bias - dot;
+//                 dot_is_neg = 0;
+//             } else {
+//                 dot -= bias;
+//             }
+//         } else {
+//             dot += bias;
+//         }
+//     }
+
+//     // Trả về signed dot: nếu âm thì return 0 - dot (theo Q8.24 unsigned, có thể cast ra int32 ở userspace)
+//     return dot_is_neg ? -(__s32)dot : (__s32)dot;
+// }
+
 static __always_inline fixed calculate_svm(data_point *dp)
 {
-    svm_weight dot = ;
+    __u32 idx = 0;
+    svm_weight *w = bpf_map_lookup_elem(&svm_map, &idx);
+    if (!w) return 0;
 
-    #pragma unroll
-    for (__u32 i = 0; i < MAX_FEATURES; i++) {
-        svm_weight *w = bpf_map_lookup_elem(&svm_map, &i);
-        if (!w)
-            continue;
-
-        // nhân giá trị tuyệt đối, rồi trừ hoặc cộng tùy dấu
-        fixed term = fixed_mul(w->value, dp->features[i]);
-        if (w->is_neg)
-            dot = fixed_sub(dot, term);
-        else
-            dot = fixed_add(dot, term);
+    fixed dot = 0;
+#pragma unroll
+    for (int i = 0; i < MAX_FEATURES; i++) {
+        fixed term = fixed_mul(w->value[i], dp->features[i]);
+        dot += term;
     }
 
-    // === bias term (cuối cùng) ===
-    __u32 bias_idx = MAX_FEATURES;  // bias lưu ở vị trí cuối
-    svm_weight *bias = bpf_map_lookup_elem(&svm_map, &bias_idx);
-    if (bias) {
-        if (bias->is_neg)
-            dot = fixed_sub(dot, bias->value);
-        else
-            dot = fixed_add(dot, bias->value);
-    }
+    // Bias
+    dot += w->value[MAX_FEATURES];
 
     return dot;
 }
@@ -207,10 +296,9 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
 
     fixed eval = calculate_svm(dp);
-
-    dp->label = (eval < 0) ? 0 : 1; // 0=attack, 1=BENIGN
-
-    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY); 
+    bpf_printk("Gia tri eval la: %d\n", eval);
+    dp->label = (eval < 0) ? 0 : 1;
+    // bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY); 
     return XDP_PASS;
 }
 

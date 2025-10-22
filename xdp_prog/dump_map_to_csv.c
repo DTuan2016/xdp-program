@@ -25,19 +25,38 @@ static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
     char dst_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
-    fprintf(f, "%s,%u,%s,%u,%d,%u,%u,%u,%u,%u,%u\n",
+    fprintf(f, "%s,%u,%s,%u,%d,%f,%f,%f,%f,%f,%u\n",
             src_ip,
             key->src_port,
             dst_ip,
             key->dst_port,
             key->proto,
-            dp->features[0],
-            dp->features[1],
-            dp->features[2],
-            dp->features[3],
-            dp->features[4],
+            fixed_to_float(dp->features[0]),
+            fixed_to_float(dp->features[1]),
+            fixed_to_float(dp->features[2]),
+            fixed_to_float(dp->features[3]),
+            fixed_to_float(dp->features[4]),
             dp->label);
 }
+
+// static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
+//     char src_ip[INET_ADDRSTRLEN];
+//     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
+//     char dst_ip[INET_ADDRSTRLEN];
+//     inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
+//     fprintf(f, "%s,%u,%s,%u,%d,%u,%u,%u,%u,%u,%u\n",
+//             src_ip,
+//             key->src_port,
+//             dst_ip,
+//             key->dst_port,
+//             key->proto,
+//             dp->features[0],
+//             dp->features[1],
+//             dp->features[2],
+//             dp->features[3],
+//             dp->features[4],
+//             dp->label);
+// }
 
 static void dump_flow_map_to_csv(int map_fd, FILE *f) {
     struct flow_key key, next_key;
