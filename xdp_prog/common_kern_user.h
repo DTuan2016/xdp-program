@@ -10,7 +10,7 @@
 #define SCALE               10000
 #define TRAINING_SET        10000
 #define MAX_FLOW_SAVED      1000
-#define MAX_FEATURES        5
+#define MAX_FEATURES        6
 // Còn 20, 10
 #define MAX_TREES           20
 #define MAX_NODE_PER_TREE   256
@@ -38,20 +38,20 @@ typedef struct {
     __u32   last_seen;            /* Timestamp of last packet */
     __u32   total_pkts;           /* Total packet count (Paccket/s)*/
     __u32   total_bytes;          /* Total byte count (Bytes/s)*/
-    __u64   sum_IAT;              /* Sum of Inter-Arrival Times */
+    // __u64   sum_IAT;              /* Sum of Inter-Arrival Times */
     /* Feature use for algorithm */
     __u32   flow_duration;        /* Duration of a flow */
-    // __u32   flow_IAT_mean;        /* Mean Inter-Arrival Time */
-    // __u32   flow_pkts_per_s;
-    // __u32   flow_bytes_per_s;
+    __u32   min_IAT;
+    __u32   max_pkt_len;
+    __u32   min_pkt_len;
     __u32   pkt_len_mean;
-
     /*
-        features[0]: flow_duration      (Log2) 
-        features[1]: flow_pkts_per_s    (Log2)
-        features[2]: flow_bytes_per_s   (Log2)
-        features[3]: flow_IAT_mean      (Log2)
-        features[4]: pkts_len_mean      (Log2)
+        features[0]: flow_duration      
+        features[1]: total_fwd_pkts
+        features[2]: total_len_of_fwd_pkts   
+        features[3]: pkt_len_max      
+        features[4]: pkt_len_min      
+        features[5]: min_IAT
     */
     fixed features[MAX_FEATURES];
     int   label;
