@@ -111,8 +111,8 @@ static __always_inline int predict_forest(struct feat_vec fv)
     for (h = 0; h < QS_NUM_TREES; h++) {
         int exit_leaf_idx = msb_index(tree->v[h]);
         int l = tree->num_leaves_per_tree[h] * h + exit_leaf_idx;
-        if (l >= QS_NUM_NODES) return 0;
-        votes += tree->bitvectors[l];
+        if (l >= QS_NUM_LEAVES) return 0;
+        votes += tree->leaves[l];
     }
 
     if (votes > (QS_NUM_TREES / 2))
