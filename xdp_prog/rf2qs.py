@@ -51,7 +51,7 @@ def offset_marcos(offsets):
         if (feat_value < tree->threshold[i]) {                       \
             __u16 h = tree->tree_ids[i];                             \
             if (h >= QS_NUM_TREES) return 0;                         \
-            tree->v[h] ^= tree->bitvectors[i];                       \
+            tree->v[h] &= tree->bitvectors[i];                       \
         } else break;                                                \
     }                                                                \
 } while (0)
@@ -104,11 +104,14 @@ def walk_leaves(tree) -> Tuple[List[int], Dict[int,int]]:
     leaf_index_of_node = {nid: idx for idx, nid in enumerate(leaves_order)}
     return leaves_order, leaf_index_of_node
 
-def leaves_under_subtree(tree, nid: int) -> Set[int]:
+def leaves_to_masked(tree, nid: int) -> List[int]:
     children_left = tree.children_left
     children_right = tree.children_right
-    res = []
-    stack = [nid]
+
+    left_branch = children_left[nid]
+
+    res: List[int] = []
+    stack = [left_branch]
     while stack:
         u = stack.pop()
         l = children_left[u]; r = children_right[u]
@@ -122,13 +125,13 @@ def leaves_under_subtree(tree, nid: int) -> Set[int]:
     return res
 
 def bitvector_for_node(tree, nid: int, leaf_index_of_node: Dict[int,int], max_leaves_pow2: int) -> int:
-    leaves_nodes = leaves_under_subtree(tree, nid)
-    bits = list("0" * len(leaf_index_of_node))
+    leaves_nodes = leaves_to_masked(tree, nid)
+    bits = list("1" * len(leaf_index_of_node))
     for ln in leaves_nodes:
         li = leaf_index_of_node[ln]
         if li >= max_leaves_pow2:
             raise RuntimeError("leaf index exceeds max_leaves_pow2")
-        bits[li] = "1"
+        bits[li] = "0"
     if len(bits) < max_leaves_pow2:
         bits += [0] * (max_leaves_pow2 - len(bits))
     return bits
