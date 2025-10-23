@@ -146,16 +146,12 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
 static __always_inline void update_feature(data_point *dp)
 {
-    if (dp->total_pkts > 1) {
-        fixed flow_duration = fixed_log2(dp->flow_duration);
-        __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
-
-        dp->features[0] = flow_duration;
-        dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - flow_duration;
-        dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
-        dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
-        dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
-    }
+    dp->features[0] = fixed_from_uint((__u32)dp->flow_duration);
+    dp->features[1] = fixed_from_uint(dp->total_pkts);
+    dp->features[2] = fixed_from_uint(dp->total_bytes);
+    dp->features[3] = fixed_from_uint(dp->max_pkt_len);
+    dp->features[4] = fixed_from_uint(dp->min_pkt_len);
+    dp->features[5] = fixed_from_uint(dp->min_IAT);
 }
 
 /* ================= FLOW STATS ================= */
@@ -190,11 +186,18 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
 
-    if (iat_ns > 0)
-        dp->sum_IAT += iat_ns;
+    if (iat_ns > 0 && iat_ns < dp->min_IAT)
+        dp->min_IAT = iat_ns;
+    if (pkt_len > dp->max_pkt_len)
+        dp->max_pkt_len = pkt_len;
+    if (pkt_len < dp->min_pkt_len)
+        dp->min_pkt_len = pkt_len;
 
+    // if (iat_ns > 0 && iat_ns < dp->min_IAT)
+    //     dp->min_IAT = iat_ns;
     dp->last_seen = ts_us;
     dp->flow_duration = dp->last_seen - dp->start_ts;
+
     // __u32 pkey = 0;
     // struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &pkey);
     // if (params) {
