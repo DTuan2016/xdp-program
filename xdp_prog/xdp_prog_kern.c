@@ -98,7 +98,7 @@ static __always_inline int predict_forest(struct feat_vec fv)
     if (!tree)
         return 0;
 
-    __u16 h = 0;
+    // __u16 h = 0;
 
     QS_FEATURE(0, QS_OFFSETS_0, QS_OFFSETS_1);
     QS_FEATURE(1, QS_OFFSETS_1, QS_OFFSETS_2);
@@ -108,12 +108,13 @@ static __always_inline int predict_forest(struct feat_vec fv)
     QS_FEATURE(5, QS_OFFSETS_5, QS_OFFSETS_6);
 
     int votes = 0;
-    for (h = 0; h < QS_NUM_TREES; h++) {
-        int exit_leaf_idx = msb_index(tree->v[h]);
-        int l = tree->num_leaves_per_tree[h] * h + exit_leaf_idx;
-        if (l >= QS_NUM_LEAVES) return 0;
-        votes += tree->bitvectors[l];
-    }
+    QS_VOTE_BLOCK(0);
+    QS_VOTE_BLOCK(1);
+    QS_VOTE_BLOCK(2);
+    QS_VOTE_BLOCK(3);
+    QS_VOTE_BLOCK(4);
+    QS_VOTE_BLOCK(5);
+    QS_VOTE_BLOCK(6);
 
     if (votes > (QS_NUM_TREES / 2))
         return 1;
