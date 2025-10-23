@@ -40,13 +40,21 @@ typedef struct {
 } data_point; \n
 """
 
-def offset_marcos(offsets):
+def offset_marcos(offsets, leaves_per_tree: List[int]=None) -> str:
+    k = 0
     offsets_lines = "\n".join(
         f"#define QS_OFFSETS_{i} {val}" for i, val in enumerate(offsets)
     )
+
+    lines = []
+    acc = 0
+    for i, val in enumerate(leaves_per_tree):
+        lines.append(f"#define QS_LEAF_BASE_{i} {acc}")
+        acc += val
+    offsets_leaf = "\n".join(lines)
+
     macro_qs_feature = r"""#define QS_FEATURE(IDX, START, END) do {                              \
     fixed feat_value = fv.features[IDX];                             \
-    _Pragma("unroll")                                                \
     for (int i = (START); i < (END); i++) {                          \
         if (feat_value < tree->threshold[i]) {                       \
             __u16 h = tree->tree_ids[i];                             \
@@ -56,8 +64,21 @@ def offset_marcos(offsets):
     }                                                                \
 } while (0)
 """
+    marco_qs_block = r"""#define QS_VOTE_BLOCK(H) do {                                         \
+    __u8 exit_leaf_idx = msb_index(tree->v[H]);                       \
+    __u8 num_leaves    = tree->num_leaves_per_tree[H];                \
+    __u16 l = QS_LEAF_BASE_##H + exit_leaf_idx;                       \
+    if (exit_leaf_idx >= num_leaves) break;                           \
+    if (l >= QS_NUM_LEAVES) break;                                    \
+    votes += tree->leaves[l];                                         \
+} while (0)
+"""
     function = f"""
 {offsets_lines}
+
+{offsets_leaf}
+
+{marco_qs_block}
 
 {macro_qs_feature}
 """
@@ -348,7 +369,7 @@ def main():
         h.write("};\n\n")
 
        # Predict function
-        h.write(offset_marcos(offsets))
+        h.write(offset_marcos(offsets, leaves_per_tree=num_leaves))
         h.write("\n")
 
         # XDP action compatibility
