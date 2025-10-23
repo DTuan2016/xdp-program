@@ -52,7 +52,11 @@ def offset_marcos(offsets, leaves_per_tree: List[int]=None) -> str:
         lines.append(f"#define QS_LEAF_BASE_{i} {acc}")
         acc += val
     offsets_leaf = "\n".join(lines)
-
+    
+    lines = []
+    for i, val in enumerate(leaves_per_tree):
+        lines.append(f"#define QS_NUM_LEAVES_{i} {val}")
+    offsets_leaf += "\n" + "\n".join(lines)
     macro_qs_feature = r"""#define QS_FEATURE(IDX, START, END) do {                              \
     fixed feat_value = fv.features[IDX];                             \
     for (int i = (START); i < (END); i++) {                          \
@@ -64,12 +68,11 @@ def offset_marcos(offsets, leaves_per_tree: List[int]=None) -> str:
     }                                                                \
 } while (0)
 """
-    marco_qs_block = r"""#define QS_VOTE_BLOCK(H) do {                                         \
-    __u8 exit_leaf_idx = msb_index(tree->v[H]);                       \
-    __u8 num_leaves    = tree->num_leaves_per_tree[H];                \
-    __u16 l = QS_LEAF_BASE_##H + exit_leaf_idx;                       \
-    if (exit_leaf_idx >= num_leaves) break;                           \
-    if (l >= QS_NUM_LEAVES) break;                                    \
+    marco_qs_block = r"""#define QS_VOTE_BLOCK(H) do {                 \
+    BITVECTOR_TYPE exit_leaf_idx = (BITVECTOR_TYPE)(__u8)msb_index(tree->v[H]);         \
+    if (exit_leaf_idx >= QS_NUM_LEAVES_##H) return 0;                 \
+    BITVECTOR_TYPE l = QS_LEAF_BASE_##H + exit_leaf_idx;              \
+    if (l >= QS_NUM_LEAVES) return 0;                                 \
     votes += tree->leaves[l];                                         \
 } while (0)
 """
@@ -290,7 +293,7 @@ def main():
 
         # BITVECTOR_TYPE typedef
         h.write(f"typedef {bit_type} BITVECTOR_TYPE;\n\n")
-        h.write(f"static __always_inline int msb_index(BITVECTOR_TYPE x) {{\n")
+        h.write(f"static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {{\n")
         h.write(f"    return {msb_builtin}\n")
         h.write("}\n\n")
         
