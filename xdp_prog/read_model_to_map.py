@@ -454,6 +454,6 @@ if __name__ == "__main__":
     print(f"MODEL_PATH: {MODEL_PATH}")
     print(f"MAX_TREE: {MAX_TREE}, MAX_LEAVES: {MAX_LEAVES_PER_TREES}")
     
-    MAX_DEPTH = int(log2(2 * MAX_LEAVES_PER_TREES - 1)) + 1
-    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, MAX_DEPTH, 6, 16)
+    # MAX_DEPTH = int(log2(2 * MAX_LEAVES_PER_TREES - 1)) + 1
+    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, 10, 6, 16)
     

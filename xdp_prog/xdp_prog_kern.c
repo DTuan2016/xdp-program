@@ -91,7 +91,7 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 }
 
 /* ================= TREE INFERENCE ================= */
-static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec *fv)
+static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
 {
     __u32 node_idx = root_idx;
 
@@ -117,7 +117,7 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec *fv)
         if (f_idx >= MAX_FEATURES){
             return 0;   
         }
-        __u32 f_val = fv->features[f_idx];
+        __u32 f_val = fv.features[f_idx];
         __s32 split = node->split_value;
 
         __u32 next_idx;
@@ -138,7 +138,7 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec *fv)
 }
 
 /* ================= RANDOM FOREST ================= */
-static __always_inline int predict_forest(struct feat_vec *fv)
+static __always_inline int predict_forest(struct feat_vec fv)
 {
     int votes0 = 0, votes1 = 0;
 
@@ -154,13 +154,14 @@ static __always_inline int predict_forest(struct feat_vec *fv)
 }
 
 /* ================= FLOW STATS ================= */
-static __always_inline data_point *update_stats(struct flow_key *key,
+static __always_inline int update_stats(struct flow_key *key,
                                                 struct xdp_md *ctx)
 {
     __u64 ts_us = bpf_ktime_get_ns() / 1000;
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
                              (__u8 *)((void *)(long)ctx->data));
 
+    int ret = XDP_PASS;
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
         data_point zero = {};
@@ -170,14 +171,14 @@ static __always_inline data_point *update_stats(struct flow_key *key,
         zero.total_bytes = pkt_len;
 
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
-            return NULL;
+            return ret;
 
         __u32 idx = 0;
         __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
         if (cnt)
             __sync_fetch_and_add(cnt, 1);
 
-        return bpf_map_lookup_elem(&xdp_flow_tracking, key);
+        return ret;
     }
 
     __u64 iat_ns = (dp->last_seen > 0 && ts_us >= dp->last_seen) ? ts_us - dp->last_seen : 0;
@@ -212,8 +213,12 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     bpf_printk("FWD_PKT_LEN_MIN = %u\n", fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN]);
     bpf_printk("FWD_IAT_MIN = %u\n", fv.features[QS_FEATURE_FWD_IAT_MIN]);
 
-    dp->label = predict_forest(&fv);
-    return dp;
+    int pred = predict_forest(fv);
+    dp->label = pred ? 1 : 0;
+    if (bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0)
+        return ret;
+
+    return ret;
 }
 
 /* ================= XDP ENTRY ================= */
@@ -229,12 +234,8 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     if (ret < 0)
         return XDP_PASS;
 
-    data_point *dp = update_stats(&key, ctx);
-    if (!dp)
-        return XDP_PASS;
-
-    bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
-    return XDP_PASS;
+    ret = update_stats(&key, ctx);
+    return ret;
 }
 
 char _license[] SEC("license") = "GPL";
