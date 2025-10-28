@@ -26,28 +26,12 @@ struct {
 } xdp_flow_tracking SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_key);
-    __type(value, data_point);
-    __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_dropped SEC(".maps");
-
-struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
     __type(key, __u32);
     __type(value, Node);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_randforest_nodes SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, struct forest_params);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_randforest_params SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -106,52 +90,67 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
-// static __always_inline void apply_min_max_scale(data_point *dp, const struct forest_params *params)
-// {
-//     if (!params)
-//         return;
-
-// // #pragma unroll
-//     for (int i = 0; i < MAX_FEATURES; i++) {
-//         fixed x = dp->features[i];
-//         fixed minv = params->min_vals[i];
-//         fixed maxv = params->max_vals[i];
-//         fixed range = maxv - minv;
-
-//         if (range <= 0)
-//             dp->features[i] = 0;
-//         else
-//             dp->features[i] = fixed_div((x - minv), range);
-//     }
-// }
-
-// /* ================= FEATURE UPDATE ================= */
-// static __always_inline void update_feature(data_point *dp, const struct forest_params *params)
-// {
-//     if (dp->total_pkts > 1) {
-//         fixed flow_duration = fixed_log2(dp->flow_duration);
-//         __u64 mean_iat_us = dp->sum_IAT / (dp->total_pkts - 1);
-
-//         dp->features[0] = flow_duration;
-//         dp->features[1] = fixed_log2(dp->total_pkts * 1000000) - flow_duration;
-//         dp->features[2] = fixed_log2(dp->total_bytes * 1000000) - flow_duration;
-//         dp->features[3] = fixed_log2(mean_iat_us); // Log2(Mean IAT)
-//         dp->features[4] = fixed_log2(dp->total_bytes) - fixed_log2(dp->total_pkts);
-
-//         /* scale only if params provided */
-//         if (params)
-//             apply_min_max_scale(dp, params);
-//     }
-// }
-
-static __always_inline void update_feature(data_point *dp)
+/* ================= TREE INFERENCE ================= */
+static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec *fv)
 {
-    dp->features[0] = fixed_from_uint((__u32)dp->flow_duration);
-    dp->features[1] = fixed_from_uint(dp->total_pkts);
-    dp->features[2] = fixed_from_uint(dp->total_bytes);
-    dp->features[3] = fixed_from_uint(dp->max_pkt_len);
-    dp->features[4] = fixed_from_uint(dp->min_pkt_len);
-    dp->features[5] = fixed_from_uint(dp->min_IAT);
+    __u32 node_idx = root_idx;
+
+    #pragma unroll MAX_DEPTH
+    for (int depth = 0; depth < MAX_DEPTH; depth++) {
+        if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
+            bpf_printk("Node OOB: node_idx=%u, root_idx=%u\n", node_idx, root_idx);
+            return 0; // out-of-bounds
+        }
+
+        Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
+        if (!node){
+            return 0;
+        }
+        if (node->is_leaf) {
+            bpf_printk("NODE LA: idx=%u, label=%d\n", node_idx, node->label);
+            return node->label;
+        }
+        bpf_printk("Tree %d, Depth %d, NodeIdx=%u, Left=%d, Right=%d, Split=%llu, Feature=%d, IsLeaf=%u, Label=%d\n",
+                        node->tree_idx, depth, node_idx, node->left_idx, node->right_idx,
+                        node->split_value, node->feature_idx, node->is_leaf, node->label);
+        __u32 f_idx = node->feature_idx;
+        if (f_idx >= MAX_FEATURES){
+            return 0;   
+        }
+        __u32 f_val = fv->features[f_idx];
+        __s32 split = node->split_value;
+
+        __u32 next_idx;
+        if (f_val <= ( __u32)split) {
+            next_idx = node->left_idx;
+        } else {
+            next_idx = node->right_idx;
+        }
+
+        if (next_idx == (__u32)-1 || next_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
+            return 0;
+        }
+
+        node_idx = next_idx;
+    }
+    bpf_printk("Reached MAX_DEPTH: root_idx=%u\n", root_idx);
+    return 0;
+}
+
+/* ================= RANDOM FOREST ================= */
+static __always_inline int predict_forest(struct feat_vec *fv)
+{
+    int votes0 = 0, votes1 = 0;
+
+    #pragma unroll MAX_TREES
+    for (__u32 t = 0; t < MAX_TREES; t++) {
+        __u32 root_key = t * MAX_NODE_PER_TREE;
+        int pred = predict_one_tree(root_key, fv);
+        if (pred == 0) votes0++;
+        else votes1++;
+    }
+
+    return (votes1 > votes0) ? 1 : 0;
 }
 
 /* ================= FLOW STATS ================= */
@@ -193,88 +192,28 @@ static __always_inline data_point *update_stats(struct flow_key *key,
     if (pkt_len < dp->min_pkt_len)
         dp->min_pkt_len = pkt_len;
 
-    // if (iat_ns > 0 && iat_ns < dp->min_IAT)
-    //     dp->min_IAT = iat_ns;
     dp->last_seen = ts_us;
-    dp->flow_duration = dp->last_seen - dp->start_ts;
+    struct feat_vec fv = {
+        .features = {0},
+    };
 
-    // __u32 pkey = 0;
-    // struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &pkey);
-    // if (params) {
-    //     /* verifier now knows params != NULL on the true branch */
-    //     update_feature(dp, params);
-    // } else {
-    //     /* No params: still update features without scaling (or early return) */
-    //     update_feature(dp, NULL);
-    // }
-    update_feature(dp);
+    fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
+    fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
+    fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
+    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
+    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
+    fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
+
+    // bpf_printk(fv.features)
+    bpf_printk("FLOW_DURATION = %u\n", fv.features[QS_FEATURE_FLOW_DURATION]);
+    bpf_printk("TOTAL_FWD_PACKET = %u\n", fv.features[QS_FEATURE_TOTAL_FWD_PACKET]);
+    bpf_printk("TOTAL_LENGTH_FWD = %u\n", fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET]);
+    bpf_printk("FWD_PKT_LEN_MAX = %u\n", fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX]);
+    bpf_printk("FWD_PKT_LEN_MIN = %u\n", fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN]);
+    bpf_printk("FWD_IAT_MIN = %u\n", fv.features[QS_FEATURE_FWD_IAT_MIN]);
+
+    dp->label = predict_forest(&fv);
     return dp;
-}
-
-/* ================= TREE INFERENCE ================= */
-static __always_inline int predict_one_tree(__u32 root_idx, const data_point *dp)
-{
-    __u32 node_idx = root_idx;
-
-#pragma unroll MAX_TREE_DEPTH
-    for (int depth = 0; depth < MAX_TREE_DEPTH; depth++) {
-        if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
-            return 0; // out-of-bounds
-        }
-
-        Node *node = bpf_map_lookup_elem(&xdp_randforest_nodes, &node_idx);
-        if (!node)
-            return 0;
-
-        if (node->is_leaf) {
-            return node->label;
-        }
-
-        __u32 f_idx = node->feature_idx;
-        if (f_idx >= MAX_FEATURES)
-            return 0;
-
-        __u32 f_val = dp->features[f_idx];
-        __s32 split = node->split_value;
-
-        __u32 next_idx;
-        if (f_val <= ( __u32)split) {
-            next_idx = node->left_idx;
-        } else {
-            next_idx = node->right_idx;
-        }
-
-        if (next_idx == (__u32)-1 || next_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
-            return 0;
-        }
-
-        node_idx = next_idx;
-    }
-
-    return 0;
-}
-
-/* ================= RANDOM FOREST ================= */
-static __always_inline int predict_forest(data_point *dp)
-{
-    __u32 key = 0;
-    struct forest_params *params = bpf_map_lookup_elem(&xdp_randforest_params, &key);
-    if (!params || params->n_trees == 0)
-        return 0;
-
-    __u32 max_trees = (params->n_trees > MAX_TREES) ? MAX_TREES : params->n_trees;
-
-    int votes0 = 0, votes1 = 0;
-
-    #pragma unroll MAX_TREES
-    for (__u32 t = 0; t < max_trees; t++) {
-        __u32 root_key = t * MAX_NODE_PER_TREE;
-        int pred = predict_one_tree(root_key, dp);
-        if (pred == 0) votes0++;
-        else votes1++;
-    }
-
-    return (votes1 > votes0) ? 1 : 0;
 }
 
 /* ================= XDP ENTRY ================= */
@@ -293,9 +232,6 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     data_point *dp = update_stats(&key, ctx);
     if (!dp)
         return XDP_PASS;
-
-    int pred = predict_forest(dp);
-    dp->label = pred ? 1 : 0;
 
     bpf_map_update_elem(&xdp_flow_tracking, &key, dp, BPF_ANY);
     return XDP_PASS;

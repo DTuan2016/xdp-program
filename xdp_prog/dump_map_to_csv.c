@@ -21,8 +21,9 @@ const char *pin_basedir = "/sys/fs/bpf";
 
 /* ================= CSV PRINT ================= */
 static void print_node_csv(FILE *f, __u32 key, const Node *node) {
-    fprintf(f, "%u,%d,%d,%d,%d,%d,%d,%d\n",
+    fprintf(f, "%u,%d,%d,%d,%d,%lld,%d,%d,%d\n",
             key,
+            node->tree_idx,
             node->left_idx,
             node->right_idx,
             node->feature_idx,
@@ -42,17 +43,12 @@ static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point
     addr1.s_addr = key->dst_ip; // network order
     inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
 
-    fprintf(f, "%s,%u,%s,%u,%u,%f,%f,%f,%f,%f,%d\n",
+    fprintf(f, "%s,%u,%s,%u,%u,%d\n",
         ip_str,
         key->src_port,
         ip_dest,
         key->dst_port,
         key->proto,
-        fixed_to_float(dp->features[0]),
-        fixed_to_float(dp->features[1]),
-        fixed_to_float(dp->features[2]),
-        fixed_to_float(dp->features[3]),
-        fixed_to_float(dp->features[4]),
         dp->label
     );
 }
@@ -120,8 +116,8 @@ int main(int argc, char **argv) {
     }
 
     /* Header CSV */
-    fprintf(f_nodes, "Key,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Label,Reserved\n");
-    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,FlowPktsPerSec,FlowBytesPerSec,FlowIATMean,PktLenMean,Label\n");
+    fprintf(f_nodes, "Key,TreeIdx,LeftIdx,RightIdx,FeatureIdx,SplitValue,IsLeaf,Label,Reserved\n");
+    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,Label\n");
 
     dump_nodes_to_csv(map_fd_nodes, f_nodes);
     dump_flow_map_to_csv(map_fd_flows, f_flows);
