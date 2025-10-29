@@ -69,14 +69,12 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
-        if ((void *)(tcph + 1) > data_end)
-            return -1;
+        if ((void *)(tcph + 1) > data_end) return -1;
         key->src_port = tcph->source;
         key->dst_port = tcph->dest;
     } else if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
-        if ((void *)(udph + 1) > data_end)
-            return -1;
+        if ((void *)(udph + 1) > data_end) return -1;
         key->src_port = udph->source;
         key->dst_port = udph->dest;
     } else {
@@ -117,11 +115,11 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
         if (f_idx >= MAX_FEATURES){
             return 0;   
         }
-        __u32 f_val = fv.features[f_idx];
-        __s32 split = node->split_value;
+        fixed f_val = fv.features[f_idx];
+        fixed split = node->split_value;
 
         __u32 next_idx;
-        if (f_val <= ( __u32)split) {
+        if (f_val <= split) {
             next_idx = node->left_idx;
         } else {
             next_idx = node->right_idx;
@@ -149,7 +147,7 @@ static __always_inline int predict_forest(struct feat_vec fv)
         if (pred == 0) votes0++;
         else votes1++;
     }
-
+    bpf_printk("Forest votes0=%d, votes1=%d\n", votes0, votes1);
     return (votes1 > votes0) ? 1 : 0;
 }
 
@@ -157,7 +155,7 @@ static __always_inline int predict_forest(struct feat_vec fv)
 static __always_inline int update_stats(struct flow_key *key,
                                                 struct xdp_md *ctx)
 {
-    __u64 ts_us = bpf_ktime_get_ns() / 1000;
+    __u64 ts_ns = bpf_ktime_get_ns();
     __u64 pkt_len = (__u64)((__u8 *)((void *)(long)ctx->data_end) -
                              (__u8 *)((void *)(long)ctx->data));
 
@@ -165,9 +163,12 @@ static __always_inline int update_stats(struct flow_key *key,
     data_point *dp = bpf_map_lookup_elem(&xdp_flow_tracking, key);
     if (!dp) {
         data_point zero = {};
-        zero.start_ts = ts_us;
-        zero.last_seen = ts_us;
+        zero.start_ts = ts_ns;
+        zero.last_seen = ts_ns;
+        zero.min_IAT = 0xFFFFFFFFFFFFFFFFULL;
         zero.total_pkts = 1;
+        zero.max_pkt_len = pkt_len;
+        zero.min_pkt_len = pkt_len;
         zero.total_bytes = pkt_len;
 
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
@@ -178,10 +179,25 @@ static __always_inline int update_stats(struct flow_key *key,
         if (cnt)
             __sync_fetch_and_add(cnt, 1);
 
+        // **Gọi predict_forest ngay cả flow mới**
+        // struct feat_vec fv = {
+        //     .features = {0},
+        // };
+        // fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(zero.last_seen - zero.start_ts);
+        // fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(zero.total_pkts);
+        // fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(zero.total_bytes);
+        // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(zero.max_pkt_len);
+        // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(zero.min_pkt_len);
+        // fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(zero.min_IAT);
+
+        // int pred = predict_forest(fv);
+        // zero.label = pred ? 1 : 0;
+        // bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY);
+
         return ret;
     }
 
-    __u64 iat_ns = (dp->last_seen > 0 && ts_us >= dp->last_seen) ? ts_us - dp->last_seen : 0;
+    __u64 iat_ns = (dp->last_seen > 0 && ts_ns >= dp->last_seen) ? ts_ns - dp->last_seen : 0;
 
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
@@ -193,7 +209,7 @@ static __always_inline int update_stats(struct flow_key *key,
     if (pkt_len < dp->min_pkt_len)
         dp->min_pkt_len = pkt_len;
 
-    dp->last_seen = ts_us;
+    dp->last_seen = ts_ns;
     struct feat_vec fv = {
         .features = {0},
     };

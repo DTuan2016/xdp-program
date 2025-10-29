@@ -34,19 +34,17 @@ static void print_node_csv(FILE *f, __u32 key, const Node *node) {
 }
 
 static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point *dp) {
-    char ip_str[INET_ADDRSTRLEN];
-    struct in_addr addr;
-    addr.s_addr = key->src_ip; // network order
-    inet_ntop(AF_INET, &addr, ip_str, sizeof(ip_str));
-    char ip_dest[INET_ADDRSTRLEN];
-    struct in_addr addr1;
-    addr1.s_addr = key->dst_ip; // network order
-    inet_ntop(AF_INET, &addr1, ip_dest, sizeof(ip_dest));
+    char src_ip[INET_ADDRSTRLEN], dst_ip[INET_ADDRSTRLEN];
+    struct in_addr saddr = { .s_addr = key->src_ip };
+    struct in_addr daddr = { .s_addr = key->dst_ip };
+
+    inet_ntop(AF_INET, &saddr, src_ip, sizeof(src_ip));
+    inet_ntop(AF_INET, &daddr, dst_ip, sizeof(dst_ip));
 
     fprintf(f, "%s,%u,%s,%u,%u,%d\n",
-        ip_str,
+        src_ip,
         key->src_port,
-        ip_dest,
+        dst_ip,
         key->dst_port,
         key->proto,
         dp->label

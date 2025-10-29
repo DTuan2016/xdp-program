@@ -386,7 +386,7 @@ def load_df_to_map(df: pd.DataFrame, MAP_PATH: str, MAX_TREE: int, MAX_LEAVES_PE
                         right_idx.to_bytes(4, "little", signed=True) +
                         split_val.to_bytes(8, "little", signed=False) +
                         int(row["feature_idx"]).to_bytes(4, "little", signed=True) +
-                        int(row["is_leaf"]).to_bytes(4, "little", signed=False) +
+                        int(row["is_leaf"]).to_bytes(4, "little", signed=True) +
                         int(row["label"]).to_bytes(4, "little", signed=True) +
                         int(tree_id).to_bytes(4, "little", signed=True)  # Sử dụng tree_id thay vì row["tree_idx"]
                     )
@@ -397,7 +397,7 @@ def load_df_to_map(df: pd.DataFrame, MAP_PATH: str, MAX_TREE: int, MAX_LEAVES_PE
                         (0).to_bytes(4, "little", signed=True) +  # right_idx
                         (0).to_bytes(8, "little", signed=False) + # split_value
                         (0).to_bytes(4, "little", signed=True) +  # feature_idx
-                        (0).to_bytes(4, "little", signed=False) + # is_leaf
+                        (0).to_bytes(4, "little", signed=True) + # is_leaf
                         (0).to_bytes(4, "little", signed=True) +  # label
                         int(tree_id).to_bytes(4, "little", signed=True)
                     )
