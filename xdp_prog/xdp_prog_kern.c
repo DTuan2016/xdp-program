@@ -22,7 +22,7 @@ struct {
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
 struct {
@@ -30,7 +30,7 @@ struct {
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, struct qsDataStruct);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } qs_forest SEC(".maps");
 
 struct {
@@ -38,7 +38,7 @@ struct {
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, __u32);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_counter SEC(".maps");
 
 /* ================= PACKET PARSING ================= */

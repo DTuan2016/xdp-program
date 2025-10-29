@@ -77,6 +77,7 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 	char pin_dir[PATH_MAX];
 	int err, len;
 
+	memset(pin_dir, 0, sizeof(pin_dir));
 	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, subdir);
 	if (len < 0) {
 		fprintf(stderr, "ERR: creating pin dirname\n");
@@ -118,18 +119,15 @@ int main(int argc, char **argv)
 {
 	struct xdp_program *program;
 	struct bpf_map_info info = {0};
-	char pin_dir[100];
 	int err, len, qs_model_map_fd, key = 0;
 
 	struct config cfg = {
-		.attach_mode = XDP_MODE_NATIVE,
+		.attach_mode = XDP_MODE_SKB,
 		.ifindex     = -1,
 		.do_unload   = false,
 	};
 
-	/* Set default BPF-ELF object file and BPF program name */
 	strncpy(cfg.filename, default_filename, sizeof(cfg.filename));
-	/* Cmdline options can change progname */
 	parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
 
 	/* Required option */
@@ -138,13 +136,15 @@ int main(int argc, char **argv)
 		usage(argv[0], __doc__, long_options, (argc == 1));
 		return EXIT_FAIL_OPTION;
 	}
-
-	len = snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, cfg.ifname);
+	char pin_dir[PATH_MAX];
+	memset(pin_dir, 0, sizeof(pin_dir));
+	len = snprintf(pin_dir, sizeof(pin_dir), "%s/%s", pin_basedir, cfg.ifname);
 	if (len < 0) {
 		fprintf(stderr, "ERR: creating pin dirname\n");
 		return EXIT_FAIL_OPTION;
 	}
-	memcpy(cfg.pin_dir, pin_dir, sizeof(pin_dir)); 
+	strncpy(cfg.pin_dir, pin_dir, sizeof(cfg.pin_dir) - 1);
+	cfg.pin_dir[sizeof(cfg.pin_dir) - 1] = '\0';
 
 	program = load_bpf_and_xdp_attach(&cfg);
 	if (!program)
@@ -168,9 +168,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "ERR: creating pin dirname\n");
         return EXIT_FAIL_OPTION;
     }
-	qs_model_map_fd = open_bpf_map_file(pin_dir, "xdp_randforest_params", &info);
+	qs_model_map_fd = open_bpf_map_file(pin_dir, "qs_forest", &info);
     if (qs_model_map_fd < 0) {
-        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_randforest_params'\n", pin_dir);
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/qs_forest'\n", pin_dir);
         return EXIT_FAIL_BPF;
     }
 	/* Load QS model data into the map */
