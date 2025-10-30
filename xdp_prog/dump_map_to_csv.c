@@ -65,9 +65,9 @@ int main(int argc, char **argv) {
     char pin_dir[PATH_MAX];
     snprintf(pin_dir, PATH_MAX, "%s/%s", pin_basedir, ifname);
 
-    int map_fd_flows = open_bpf_map_file(pin_dir, "xdp_flow_tracking", &info);
+    int map_fd_flows = open_bpf_map_file(pin_dir, "xdp_flow_dropped", &info);
     if (map_fd_flows < 0) {
-        fprintf(stderr, "ERR: cannot open map xdp_flow_tracking\n");
+        fprintf(stderr, "ERR: cannot open map xdp_flow_dropped\n");
         return EXIT_FAILURE;
     }
 

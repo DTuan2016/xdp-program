@@ -34,6 +34,14 @@ struct {
 } qs_forest SEC(".maps");
 
 struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_FLOW_SAVED);
+    __type(key, struct flow_key);
+    __type(value, data_point);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+} xdp_flow_dropped SEC(".maps");
+
+struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, 1);
     __type(key, __u32);
@@ -179,6 +187,14 @@ static __always_inline int update_stats(struct flow_key *key,
     int pred = predict_forest(fv);
     dp->label = pred ? 1 : 0;
     
+    if(dp->label == 0){
+        ret = XDP_PASS;
+    } 
+    else {
+        ret = XDP_DROP;
+        if (bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY) != 0)
+            return ret;
+    }
     if (bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0)
         return ret;
 
