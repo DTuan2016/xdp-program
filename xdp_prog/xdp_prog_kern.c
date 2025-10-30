@@ -5,6 +5,7 @@
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
+#include <linux/icmp.h>
 #include <linux/in.h>
 #include <bpf/bpf_endian.h>
 
@@ -22,15 +23,23 @@ struct {
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, struct flow_key);
+    __type(value, data_point);
+    __uint(max_entries, MAX_FLOW_SAVED);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+} xdp_flow_dropped SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
     __type(key, __u32);
     __type(value, Node);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_randforest_nodes SEC(".maps");
 
 struct {
@@ -38,7 +47,7 @@ struct {
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, __u32);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } flow_counter SEC(".maps");
 
 /* ================= PACKET PARSING ================= */
@@ -66,6 +75,22 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     key->src_ip = iph->saddr;
     key->dst_ip = iph->daddr;
     key->proto  = iph->protocol;
+
+    if (iph->protocol == IPPROTO_ICMP) {
+        struct icmphdr *icmp = (struct icmphdr *)((__u8 *)iph + (iph->ihl * 4));
+        if ((void *)(icmp + 1) > data_end)
+            return -1;
+
+        __u32 src = bpf_ntohl(iph->saddr);
+        __u32 dst = bpf_ntohl(iph->daddr);
+
+        // 192.168.50.3 -> 192.168.50.4 (type 8 = Echo Request)
+        // 192.168.50.4 -> 192.168.50.3 (type 0 = Echo Reply)
+        if ((src == 0xC0A83203 && dst == 0xC0A83204 && icmp->type == 8) ||
+            (src == 0xC0A83204 && dst == 0xC0A83203 && icmp->type == 0)) {
+            return 1;
+        }
+    }
 
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
@@ -96,7 +121,7 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
     #pragma unroll MAX_DEPTH
     for (int depth = 0; depth < MAX_DEPTH; depth++) {
         if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
-            bpf_printk("Node OOB: node_idx=%u, root_idx=%u\n", node_idx, root_idx);
+            // bpf_printk("Node OOB: node_idx=%u, root_idx=%u", node_idx, root_idx);
             return 0; // out-of-bounds
         }
 
@@ -105,12 +130,12 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
             return 0;
         }
         if (node->is_leaf) {
-            bpf_printk("NODE LA: idx=%u, label=%d\n", node_idx, node->label);
+            // bpf_printk("NODE LA: idx=%u, label=%d", node_idx, node->label);
             return node->label;
         }
-        bpf_printk("Tree %d, Depth %d, NodeIdx=%u, Left=%d, Right=%d, Split=%llu, Feature=%d, IsLeaf=%u, Label=%d\n",
-                        node->tree_idx, depth, node_idx, node->left_idx, node->right_idx,
-                        node->split_value, node->feature_idx, node->is_leaf, node->label);
+        // bpf_printk("Tree %d, Depth %d, NodeIdx=%u, Left=%d, Right=%d, Split=%llu, Feature=%d, IsLeaf=%u, Label=%d",
+        //                 node->tree_idx, depth, node_idx, node->left_idx, node->right_idx,
+        //                 node->split_value, node->feature_idx, node->is_leaf, node->label);
         __u32 f_idx = node->feature_idx;
         if (f_idx >= MAX_FEATURES){
             return 0;   
@@ -131,7 +156,7 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
 
         node_idx = next_idx;
     }
-    bpf_printk("Reached MAX_DEPTH: root_idx=%u\n", root_idx);
+    // bpf_printk("Reached MAX_DEPTH: root_idx=%u", root_idx);
     return 0;
 }
 
@@ -147,7 +172,7 @@ static __always_inline int predict_forest(struct feat_vec fv)
         if (pred == 0) votes0++;
         else votes1++;
     }
-    bpf_printk("Forest votes0=%d, votes1=%d\n", votes0, votes1);
+    // bpf_printk("Forest votes0=%d, votes1=%d", votes0, votes1);
     return (votes1 > votes0) ? 1 : 0;
 }
 
@@ -179,21 +204,6 @@ static __always_inline int update_stats(struct flow_key *key,
         if (cnt)
             __sync_fetch_and_add(cnt, 1);
 
-        // **Gọi predict_forest ngay cả flow mới**
-        // struct feat_vec fv = {
-        //     .features = {0},
-        // };
-        // fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(zero.last_seen - zero.start_ts);
-        // fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(zero.total_pkts);
-        // fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(zero.total_bytes);
-        // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(zero.max_pkt_len);
-        // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(zero.min_pkt_len);
-        // fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(zero.min_IAT);
-
-        // int pred = predict_forest(fv);
-        // zero.label = pred ? 1 : 0;
-        // bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY);
-
         return ret;
     }
 
@@ -220,19 +230,14 @@ static __always_inline int update_stats(struct flow_key *key,
     fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
     fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
     fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
-
-    // bpf_printk(fv.features)
-    bpf_printk("FLOW_DURATION = %u\n", fv.features[QS_FEATURE_FLOW_DURATION]);
-    bpf_printk("TOTAL_FWD_PACKET = %u\n", fv.features[QS_FEATURE_TOTAL_FWD_PACKET]);
-    bpf_printk("TOTAL_LENGTH_FWD = %u\n", fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET]);
-    bpf_printk("FWD_PKT_LEN_MAX = %u\n", fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX]);
-    bpf_printk("FWD_PKT_LEN_MIN = %u\n", fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN]);
-    bpf_printk("FWD_IAT_MIN = %u\n", fv.features[QS_FEATURE_FWD_IAT_MIN]);
-
     int pred = predict_forest(fv);
-    dp->label = pred ? 1 : 0;
-    if (bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0)
-        return ret;
+    /*BENIGN = 0, ATTACK = 1*/
+    dp->label = pred ? 1 : 0;    
+    if(dp->label == 1){
+        ret = XDP_DROP;
+        bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY);
+    }
+    else ret = XDP_PASS;
 
     return ret;
 }
@@ -247,6 +252,8 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
     if (ret == -2)
         return XDP_DROP;  // Drop LLDP
+    if (ret == 1)
+        return XDP_PASS;
     if (ret < 0)
         return XDP_PASS;
 

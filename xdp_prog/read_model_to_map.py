@@ -1,12 +1,15 @@
 import joblib
 import pandas as pd
-import os
+import os, sys
 import argparse
+import subprocess
+# from ebpfcat.arraymap import ArrayMap
+# from ebpfcat.pin import Pin
 # import ctypes
 # ctypes.cdll.LoadLibrary("/usr/lib/x86_64-linux-gnu/libbcc.so")
-from bcc import libbcc
+from bcc import libbcc, BPF
 from math import log2
-
+import ctypes
 def generate_common_header(output_path: str, max_tree : int, max_nodes : int, max_depth : int,  max_features: int = 6, fixed_shift: int = 16):
     """
     Generate common_kernel_user.h header file
@@ -31,6 +34,7 @@ def generate_common_header(output_path: str, max_tree : int, max_nodes : int, ma
 #define MAX_NODE_PER_TREE   {max_nodes}
 #define MAX_FEATURES        {max_features}
 #define MAX_DEPTH           {max_depth}
+#define TOTAL_NODES         {max_tree * max_nodes}
 #define MAX_FLOW_SAVED      1000
 
 #define QS_FEATURE_FLOW_DURATION                0
@@ -261,7 +265,7 @@ static __always_inline fixed fixed_pow(fixed base, __u32 exp)
     return result;
 }}
 
-#endif /* COMMON_KERNEL_USER_H */
+#endif /*COMMON_KERN_USER_H*/
 """    
     with open(output_path, 'w') as f:
         f.write(header_content)
@@ -410,17 +414,15 @@ def load_df_to_map(df: pd.DataFrame, MAP_PATH: str, MAX_TREE: int, MAX_LEAVES_PE
                 print(f"[LOAD TO MAPS] Node {global_idx} (tree={tree_id}, local={local_idx}) skipped: {e}")
 
     print("[LOAD TO MAPS] All trees inserted, missing nodes filled with zero.")
-    
-def pin_map(fd, map_path):
-    """Pin BPF map nếu chưa pin"""
-    if not os.path.exists(map_path):
-        ret = libbcc.lib.bpf_obj_pin(fd, map_path.encode())
-        if ret != 0:
-            raise RuntimeError(f"Không pin được map {map_path}")
-        print(f"[INFO] Map đã được pin tại {map_path}")
-    else:
-        print(f"[INFO] Map đã tồn tại tại {map_path}")
-        
+
+def run(cmd):
+    """Chạy lệnh shell và in log rõ ràng"""
+    print(f"\n[RUN] {cmd}")
+    result = subprocess.run(cmd, shell=True)
+    if result.returncode != 0:
+        print(f"Lỗi khi chạy: {cmd}")
+        sys.exit(1)
+
 if __name__ == "__main__":
     MAP_DIR = "/sys/fs/bpf/eno3"
     MAP_NAME = "xdp_randforest_nodes"
@@ -434,26 +436,18 @@ if __name__ == "__main__":
 
     MAX_TREE = args.max_tree
     MAX_LEAVES_PER_TREES = args.max_leaves
-    MAX_NODE_PER_TREES = MAX_TREE * (2* MAX_LEAVES_PER_TREES - 1)
 
-    MODEL_PATH = f"/home/dongtv/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES_PER_TREES}_model.pkl"
+    MAX_TREE = args.max_tree
+    MAX_LEAVES = args.max_leaves
+    MAX_NODE_PER_TREE = 2 * MAX_LEAVES - 1
+    MODEL_PATH = f"/home/dongtv/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl"
+    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, 8, 6, 16)
     
-    #  # Lấy fd của map đã tạo
-    # fd = libbcc.lib.bpf_obj_get(MAP_PATH.encode())
-    # if fd < 0:
-    #     raise RuntimeError(f"Không mở được map {MAP_PATH}")
-
-    # # Pin map
-    # pin_map(fd, MAP_PATH)
-
+    print("\n=== Biên dịch chương trình XDP ===")
+    run("sudo make")
+    
+    os.chdir("/home/dongtv/dtuan/xdp-program/xdp_prog")
+    print("\n==== Load chương trình XDP mới ===")
+    run(f"sudo ./xdp_loader --dev eno3 -S --progname xdp_anomaly_detector")
+    
     load_df_to_map(dump_random_forest_to_csv(MODEL_PATH), MAP_PATH, MAX_TREE, MAX_LEAVES_PER_TREES)
-    # Kiểm tra tồn tại
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Không tìm thấy model: {MODEL_PATH}")
-
-    print(f"MODEL_PATH: {MODEL_PATH}")
-    print(f"MAX_TREE: {MAX_TREE}, MAX_LEAVES: {MAX_LEAVES_PER_TREES}")
-    
-    # MAX_DEPTH = int(log2(2 * MAX_LEAVES_PER_TREES - 1)) + 1
-    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, 10, 6, 16)
-    
