@@ -5,6 +5,7 @@
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
+#include <linux/icmp.h>
 #include <linux/in.h>
 #include <bpf/bpf_endian.h>
 
@@ -32,6 +33,14 @@ struct {
     __type(value, struct qsDataStruct);
     // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } qs_forest SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, accounting);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+} accounting_map SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -74,6 +83,23 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     key->src_ip = iph->saddr;
     key->dst_ip = iph->daddr;
     key->proto  = iph->protocol;
+
+    if (iph->protocol == IPPROTO_ICMP) {
+        struct icmphdr *icmp = (struct icmphdr *)((__u8 *)iph + (iph->ihl * 4));
+        if ((void *)(icmp + 1) > data_end)
+            return -1;
+
+        __u32 src = bpf_ntohl(iph->saddr);
+        __u32 dst = bpf_ntohl(iph->daddr);
+
+        // 192.168.50.3 -> 192.168.50.4 (type 8 = Echo Request)
+        // 192.168.50.4 -> 192.168.50.3 (type 0 = Echo Reply)
+        if ((src == 0xC0A83203 && dst == 0xC0A83204 && icmp->type == 8) ||
+            (src == 0xC0A83204 && dst == 0xC0A83203 && icmp->type == 0)) {
+            return 1;
+        }
+    }
+
 
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
@@ -207,15 +233,30 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
+    __u32 key_ac;
+    
+    accounting *ac;
 
+    ac = bpf_map_lookup_elem(&accounting_map, &key_ac);
+    if (!ac)
+        return XDP_PASS; 
+
+    ac->time_in = bpf_ktime_get_ns();
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
     if (ret == -2)
         return XDP_DROP;  // Drop LLDP
+    if(ret == 1)
+        return XDP_PASS;
     if (ret < 0)
         return XDP_PASS;
 
     ret = update_stats(&key, ctx);
 
+    ac->time_out = bpf_ktime_get_ns();
+    ac->proc_time += ac->time_out - ac->time_in;
+    ac->total_bytes += pkt_len;
+    ac->total_pkts += 1;
+    bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
     return ret;
 }
 
