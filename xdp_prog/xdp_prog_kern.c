@@ -36,6 +36,15 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, accounting);
+    __uint(max_entries, 1);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+} accounting_map SEC(".maps");
+
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
     __type(key, __u32);
     __type(value, Node);
@@ -220,9 +229,7 @@ static __always_inline int update_stats(struct flow_key *key,
         dp->min_pkt_len = pkt_len;
 
     dp->last_seen = ts_ns;
-    // struct feat_vec fv = {
-    //     .features = {0},
-    // };
+
     dp->features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
     dp->features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
     dp->features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
@@ -230,12 +237,6 @@ static __always_inline int update_stats(struct flow_key *key,
     dp->features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
     dp->features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
 
-    // fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
-    // fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
-    // fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
-    // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
-    // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
-    // fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
     int pred = predict_forest(dp);
     /*BENIGN = 0, ATTACK = 1*/
     dp->label = pred ? 1 : 0;    
@@ -254,16 +255,29 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
+    __u32 key_ac;
+    
+    accounting *ac;
 
+    ac = bpf_map_lookup_elem(&accounting_map, &key_ac);
+    if (!ac)
+        return XDP_PASS; 
+
+    ac->time_in = bpf_ktime_get_ns();
     int ret = parse_packet_get_data(ctx, &key, &pkt_len);
     if (ret == -2)
-        return XDP_DROP;  // Drop LLDP
+        return XDP_DROP;  
     if (ret == 1)
         return XDP_PASS;
     if (ret < 0)
         return XDP_PASS;
 
     ret = update_stats(&key, ctx);
+    ac->time_out = bpf_ktime_get_ns();
+    ac->proc_time += ac->time_out - ac->time_in;
+    ac->total_bytes += pkt_len;
+    ac->total_pkts += 1;
+    bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
     return ret;
 }
 

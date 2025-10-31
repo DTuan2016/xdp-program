@@ -6,11 +6,11 @@
 /* Fixed-point configuration */
 #define FIXED_SHIFT         16
 #define FIXED_SCALE         65536
-#define MAX_TREES           30
-#define MAX_NODE_PER_TREE   15
+#define MAX_TREES           20
+#define MAX_NODE_PER_TREE   127
 #define MAX_FEATURES        6
-#define MAX_DEPTH           4
-#define TOTAL_NODES         450
+#define MAX_DEPTH           7
+#define TOTAL_NODES         2540
 #define MAX_FLOW_SAVED      1000
 
 #define QS_FEATURE_FLOW_DURATION                0
@@ -24,10 +24,12 @@ typedef __u64               fixed;
 
 /* Latency statistics structure */
 typedef struct {
-    __u64 start_ts;
-    __u64 end_ts;
-    __u32 count_pkts;
-} latency_stats;
+    __u64 time_in;
+    __u64 time_out;
+    __u64 proc_time;  /*proc_time += time_out - time_in*/
+    __u32 total_pkts;
+    __u32 total_bytes;
+} accounting;
 
 /* Flow key structure */
 struct flow_key {

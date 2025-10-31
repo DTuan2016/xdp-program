@@ -48,10 +48,12 @@ typedef __u64               fixed;
 
 /* Latency statistics structure */
 typedef struct {{
-    __u64 start_ts;
-    __u64 end_ts;
-    __u32 count_pkts;
-}} latency_stats;
+    __u64 time_in;
+    __u64 time_out;
+    __u64 proc_time;  /*proc_time += time_out - time_in*/
+    __u32 total_pkts;
+    __u32 total_bytes;
+}} accounting;
 
 /* Flow key structure */
 struct flow_key {{
