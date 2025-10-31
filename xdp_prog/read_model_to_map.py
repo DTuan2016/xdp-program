@@ -71,13 +71,14 @@ typedef struct {{
     __u32   max_pkt_len;          /* Maximum packet length */
     __u32   min_pkt_len;          /* Minimum packet length */
     __u32   total_bytes;          /* Total byte count */
+    fixed   features[MAX_FEATURES];
     int     label;
 }} data_point;
 
-/* Definition of feature vector to calculate RF */
-struct feat_vec {{
-    fixed features[MAX_FEATURES];
-}};
+// /* Definition of feature vector to calculate RF */
+// struct feat_vec {{
+//     fixed features[MAX_FEATURES];
+// }};
 
 /* Definition of a Node of Decision Tree */
 typedef struct {{
@@ -441,7 +442,8 @@ if __name__ == "__main__":
     MAX_LEAVES = args.max_leaves
     MAX_NODE_PER_TREE = 2 * MAX_LEAVES - 1
     MODEL_PATH = f"/home/dongtv/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl"
-    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, 8, 6, 16)
+    MAX_DEPTH = int(log2(MAX_NODE_PER_TREE)) + 1
+    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, MAX_DEPTH, 6, 16)
     
     print("\n=== Biên dịch chương trình XDP ===")
     run("sudo make")

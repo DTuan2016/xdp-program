@@ -6,11 +6,11 @@
 /* Fixed-point configuration */
 #define FIXED_SHIFT         16
 #define FIXED_SCALE         65536
-#define MAX_TREES           20
+#define MAX_TREES           30
 #define MAX_NODE_PER_TREE   15
 #define MAX_FEATURES        6
-#define MAX_DEPTH           8
-#define TOTAL_NODES         300
+#define MAX_DEPTH           4
+#define TOTAL_NODES         450
 #define MAX_FLOW_SAVED      1000
 
 #define QS_FEATURE_FLOW_DURATION                0
@@ -47,13 +47,14 @@ typedef struct {
     __u32   max_pkt_len;          /* Maximum packet length */
     __u32   min_pkt_len;          /* Minimum packet length */
     __u32   total_bytes;          /* Total byte count */
+    fixed   features[MAX_FEATURES];
     int     label;
 } data_point;
 
-/* Definition of feature vector to calculate RF */
-struct feat_vec {
-    fixed features[MAX_FEATURES];
-};
+// /* Definition of feature vector to calculate RF */
+// struct feat_vec {
+//     fixed features[MAX_FEATURES];
+// };
 
 /* Definition of a Node of Decision Tree */
 typedef struct {

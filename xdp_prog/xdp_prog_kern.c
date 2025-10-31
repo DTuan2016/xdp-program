@@ -114,11 +114,11 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 }
 
 /* ================= TREE INFERENCE ================= */
-static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
+static __always_inline int predict_one_tree(__u32 root_idx, data_point *dp)
 {
     __u32 node_idx = root_idx;
 
-    #pragma unroll MAX_DEPTH
+    // #pragma unroll MAX_DEPTH
     for (int depth = 0; depth < MAX_DEPTH; depth++) {
         if (node_idx >= (MAX_TREES * MAX_NODE_PER_TREE)) {
             // bpf_printk("Node OOB: node_idx=%u, root_idx=%u", node_idx, root_idx);
@@ -140,7 +140,7 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
         if (f_idx >= MAX_FEATURES){
             return 0;   
         }
-        fixed f_val = fv.features[f_idx];
+        fixed f_val = dp->features[f_idx];
         fixed split = node->split_value;
 
         __u32 next_idx;
@@ -161,14 +161,14 @@ static __always_inline int predict_one_tree(__u32 root_idx, struct feat_vec fv)
 }
 
 /* ================= RANDOM FOREST ================= */
-static __always_inline int predict_forest(struct feat_vec fv)
+static __always_inline int predict_forest(data_point *dp)
 {
     int votes0 = 0, votes1 = 0;
 
-    #pragma unroll MAX_TREES
+    // #pragma unroll MAX_TREES
     for (__u32 t = 0; t < MAX_TREES; t++) {
         __u32 root_key = t * MAX_NODE_PER_TREE;
-        int pred = predict_one_tree(root_key, fv);
+        int pred = predict_one_tree(root_key, dp);
         if (pred == 0) votes0++;
         else votes1++;
     }
@@ -220,17 +220,23 @@ static __always_inline int update_stats(struct flow_key *key,
         dp->min_pkt_len = pkt_len;
 
     dp->last_seen = ts_ns;
-    struct feat_vec fv = {
-        .features = {0},
-    };
+    // struct feat_vec fv = {
+    //     .features = {0},
+    // };
+    dp->features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
+    dp->features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
+    dp->features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
+    dp->features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
+    dp->features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
+    dp->features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
 
-    fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
-    fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
-    fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
-    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
-    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
-    fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
-    int pred = predict_forest(fv);
+    // fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
+    // fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
+    // fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
+    // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
+    // fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
+    // fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
+    int pred = predict_forest(dp);
     /*BENIGN = 0, ATTACK = 1*/
     dp->label = pred ? 1 : 0;    
     if(dp->label == 1){
