@@ -2,7 +2,7 @@
 
 XDP_TARGETS := xdp_prog_kern
 USER_TARGETS := xdp_loader
-USER_TARGETS += xdp_stats
+# USER_TARGETS += xdp_stats
 USER_TARGETS += dump_map_to_csv
 COMMON_DIR := ../common
 
