@@ -270,12 +270,12 @@ const svm_weight svm_weights = {{
 if __name__ == "__main__":
     df_weights = dump_linear_svm_to_df("/home/dongtv/security_paper/svm/models/SVM-Linear.pkl")
     print(df_weights.head())
-    df_weights.to_csv("svm_weights.csv", index=False)
-    print("Đã xuất trọng số ra svm_weights.csv")
+    # df_weights.to_csv("svm_weights.csv", index=False)
+    # print("Đã xuất trọng số ra svm_weights.csv")
     
     df_scaler = dump_min_max_scaler("/home/dongtv/security_paper/svm/scalers/scaler_SVM-Linear.pkl")
-    df_scaler.to_csv("svm_scaler.csv")
-    print("Đã xuất scaler ra svm_scaler.csv")
+    # df_scaler.to_csv("svm_scaler.csv")
+    # print("Đã xuất scaler ra svm_scaler.csv")
     
     generate_common_header("common_kern_user.h")
     generate_svm_weights(df_weights=df_weights, df_scaler=df_scaler, output_path="common_kern_user.h")
