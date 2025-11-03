@@ -25,17 +25,18 @@ static void print_flow_csv(FILE *f, const struct flow_key *key, const data_point
     inet_ntop(AF_INET, &key->src_ip, src_ip, sizeof(src_ip));
     char dst_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &key->dst_ip, dst_ip, sizeof(dst_ip));
-    fprintf(f, "%s,%u,%s,%u,%d,%f,%f,%f,%f,%f,%u\n",
+    fprintf(f, "%s,%u,%s,%u,%d,%llu,%llu,%llu,%llu,%llu,%llu,%u\n",
             src_ip,
             key->src_port,
             dst_ip,
             key->dst_port,
             key->proto,
-            fixed_to_float(dp->features[0]),
-            fixed_to_float(dp->features[1]),
-            fixed_to_float(dp->features[2]),
-            fixed_to_float(dp->features[3]),
-            fixed_to_float(dp->features[4]),
+            dp->features[0],
+            dp->features[1],
+            dp->features[2],
+            dp->features[3],
+            dp->features[4],
+            dp->features[5],
             dp->label);
 }
 
@@ -80,7 +81,7 @@ int main(int argc, char **argv) {
     }
 
     /* Header CSV */
-    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,Feature0,Feature1,Feature2,Feature3,Feature4,Label\n");
+    fprintf(f_flows, "SrcIP,SrcPort,DstIP,DstPort,Proto,FlowDuration,TotalFwdPkts,TotalFwdBytes,Max_Len,Min_len,IAT_min,Label\n");
 
     // dump_nodes_to_csv(map_fd_nodes, f_nodes);
     dump_flow_map_to_csv(map_fd_flows, f_flows);

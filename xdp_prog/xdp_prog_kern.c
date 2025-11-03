@@ -23,7 +23,7 @@ struct {
     __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, svm_weight);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } svm_map SEC(".maps");
 
 // Flow tracking
@@ -32,7 +32,7 @@ struct {
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
 struct {
@@ -40,8 +40,16 @@ struct {
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
-    __uint(pinning, LIBBPF_PIN_BY_NAME);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_dropped SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, accounting);
+    // __uint(pinning, LIBBPF_PIN_BY_NAME);
+} accounting_map SEC(".maps");
 
 /* ================= PACKET PARSING ================= */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
@@ -85,12 +93,16 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
 
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
-        if ((void *)(tcph + 1) > data_end) return -1;
+        if ((void *)(tcph + 1) > data_end){
+            return -1;
+        }
         key->src_port = tcph->source;
         key->dst_port = tcph->dest;
     } else if (iph->protocol == IPPROTO_UDP) {
         struct udphdr *udph = (struct udphdr *)((__u8 *)iph + (iph->ihl * 4));
-        if ((void *)(udph + 1) > data_end) return -1;
+        if ((void *)(udph + 1) > data_end){
+            return -1;
+        }
         key->src_port = udph->source;
         key->dst_port = udph->dest;
     } else {
@@ -110,13 +122,19 @@ static __always_inline __s128 calculate_svm (data_point *dp, const svm_weight *p
         return 0;
     __s128 dot = 0;
     for (int i = 0; i < MAX_FEATURES; i++) {
-        dp->features[i] = fixed_mul(dp->features[i], params->scale[i]);
+        bpf_printk("feature[%d]=%llu, min_vals[%d]=%llu, max_vals[%d]=%llu", i, dp->features[i], i, params->min_vals[i], i, params->max_vals[i]);
+        fixed test = dp->features[i] - params->min_vals[i];
+        fixed scale = params->max_vals[i] - params->min_vals[i];
 
+        dp->features[i] = fixed_div(test, scale);
+        bpf_printk("Feature %d co gia tri la: %llu", i, dp->features[i]);
+        bpf_printk("Weight of feature %d co gia tri la: %llu", i, params->value[i]);
         __s128 term = fixed_mul(dp->features[i], params->value[i]);
         if (params->is_neg[i]== 1){
             dot -= term;
         }
         else dot += term;
+        bpf_printk("Value of dot of feature %d is: %lld", i, dot);
     }
 
     if(params->is_neg[MAX_FEATURES] == 1){
@@ -126,25 +144,6 @@ static __always_inline __s128 calculate_svm (data_point *dp, const svm_weight *p
 
     return dot;
 }
-
-// static __always_inline fixed calculate_svm(data_point *dp)
-// {
-//     __u32 idx = 0;
-//     svm_weight *w = bpf_map_lookup_elem(&svm_map, &idx);
-//     if (!w) return 0;
-
-//     fixed dot = 0;
-// #pragma unroll
-//     for (int i = 0; i < MAX_FEATURES; i++) {
-//         fixed term = fixed_mul(w->value[i], dp->features[i]);
-//         dot += term;
-//     }
-
-//     // Bias
-//     dot += w->value[MAX_FEATURES];
-
-//     return dot;
-// }
 
 /* ================= FLOW STATS ================= */
 static __always_inline int update_stats(struct flow_key *key,
@@ -184,24 +183,28 @@ static __always_inline int update_stats(struct flow_key *key,
 
     dp->last_seen = ts_ns;
 
-    dp->features[FEATURE_FLOW_DURATION]                 = fixed_from_uint(dp->last_seen - dp->start_ts);
-    dp->features[FEATURE_TOTAL_FWD_PACKET]              = fixed_from_uint(dp->total_pkts);
-    dp->features[FEATURE_TOTAL_LENGTH_OF_FWD_PACKET]    = fixed_from_uint(dp->total_bytes);
-    dp->features[FEATURE_FWD_PACKET_LENGTH_MAX]         = fixed_from_uint(dp->max_pkt_len);
-    dp->features[FEATURE_FWD_PACKET_LENGTH_MIN]         = fixed_from_uint(dp->min_pkt_len);
-    dp->features[FEATURE_FWD_IAT_MIN]                   = fixed_from_uint(dp->min_IAT);
+    dp->features[FEATURE_FLOW_DURATION]                 = fixed_log2(dp->last_seen - dp->start_ts);
+    dp->features[FEATURE_TOTAL_FWD_PACKET]              = fixed_log2(dp->total_pkts);
+    dp->features[FEATURE_TOTAL_LENGTH_OF_FWD_PACKET]    = fixed_log2(dp->total_bytes);
+    dp->features[FEATURE_FWD_PACKET_LENGTH_MAX]         = fixed_log2(dp->max_pkt_len);
+    dp->features[FEATURE_FWD_PACKET_LENGTH_MIN]         = fixed_log2(dp->min_pkt_len);
+    dp->features[FEATURE_FWD_IAT_MIN]                   = fixed_log2(dp->min_IAT);
 
+    bpf_printk("dp->last_seen=%llu; dp->total_pkts=%u; dp->total_bytes=%llu; ", dp->last_seen, dp->total_pkts, dp->total_bytes);
     __u32 key_pr = 0;
     svm_weight *svm_pr = bpf_map_lookup_elem(&svm_map, &key_pr); 
 
     __s128 svm_ret = calculate_svm(dp, svm_pr);
     if(svm_ret < 0){
-        ret = XDP_DROP;
-    }
-    else{
+        dp->label = 1;
+        bpf_printk("Toi drop roi khong track nua!");
         ret = XDP_PASS;
     }
-    if(bpf_map_update_elem(&svm_map, dp, &key, BPF_ANY) != 0){
+    else{
+        dp->label = 0;
+        ret = XDP_PASS;
+    }
+    if(bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0){
         return ret;
     }
     return ret;
@@ -211,6 +214,7 @@ static __always_inline int update_stats(struct flow_key *key,
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
+    // bpf_printk("===START===");
     struct flow_key key = {};
     __u64 pkt_len = 0;
 
