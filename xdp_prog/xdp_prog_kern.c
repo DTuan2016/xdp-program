@@ -124,11 +124,38 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
     return 0;
 }
 
+static __always_inline __u64 qs_vote_all(struct qsDataStruct *tree)
+{
+    __u64 votes = 0;
+    __u64 leaf_base = 0;
+    // bpf_printk("START VOTING");
+    // #pragma unroll
+    for (int h = 0; h < QS_NUM_TREES; h++) {
+        // bpf_printk("Voting with tree %d", h);
+        // BITVECTOR_TYPE exit_leaf_idx = (BITVECTOR_TYPE)(__u8)msb_index(tree->v[h]);
+        BITVECTOR_TYPE exit_leaf_idx = (__u8)msb_index(tree->v[h]);
+        __u8 num_leaves = tree->num_leaves_per_tree[h];
+        if (exit_leaf_idx >= num_leaves)
+            goto next_tree;
+
+        __u64 leaf_index = leaf_base + exit_leaf_idx;
+        if (leaf_index >= QS_NUM_LEAVES)
+            goto next_tree;
+
+        votes += tree->leaves[leaf_index];
+
+    next_tree:
+        leaf_base += num_leaves; 
+    }
+    
+    return votes;
+}
 /* ================= RF INFERENCE ================= */
 static __always_inline int predict_forest(struct feat_vec fv)
 {
     __u32 key = 0;
     struct qsDataStruct *tree = bpf_map_lookup_elem(&qs_forest, &key);
+    // bpf_printk("JMP TO PREDICT_FOREST");
     if (!tree)
         return 0;
 
@@ -140,20 +167,17 @@ static __always_inline int predict_forest(struct feat_vec fv)
     QS_FEATURE(3, QS_OFFSETS_3, QS_OFFSETS_4);
     QS_FEATURE(4, QS_OFFSETS_4, QS_OFFSETS_5);
     QS_FEATURE(5, QS_OFFSETS_5, QS_OFFSETS_6);
-
-    int votes = 0;
-    QS_VOTE_BLOCK(0);
-    QS_VOTE_BLOCK(1);
-    QS_VOTE_BLOCK(2);
-    QS_VOTE_BLOCK(3);
-    QS_VOTE_BLOCK(4);
-    QS_VOTE_BLOCK(5);
-    QS_VOTE_BLOCK(6);
-
-    if (votes > (QS_NUM_TREES / 2))
+    // bpf_printk("DONE QS FEATURE");
+    __u64 votes = qs_vote_all(tree);
+    // bpf_printk("DONE QS FEATURE");
+    if (votes > (QS_NUM_TREES / 2)){
+        // bpf_printk("Vote = 1");
         return 1;
-    else
+    }
+    else{
+        // bpf_printk("Vote = 0");
         return 0;
+    }
 }
 
 /* ================= FLOW STATS ================= */
@@ -203,6 +227,7 @@ static __always_inline int update_stats(struct flow_key *key,
         .features = {0},
     };
 
+    // bpf_printk("START DETECTION");
     fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
     fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
     fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
@@ -211,12 +236,15 @@ static __always_inline int update_stats(struct flow_key *key,
     fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
 
     int pred = predict_forest(fv);
+    // bpf_printk("DONE PREDICT");
     dp->label = pred ? 1 : 0;
     
     if(dp->label == 0){
+        // bpf_printk("[DETECTION] BENIGN -> PASS");
         ret = XDP_PASS;
     } 
     else {
+        // bpf_printk("[DETECTION] ATTACK -> DROP");
         ret = XDP_DROP;
         if (bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY) != 0)
             return ret;

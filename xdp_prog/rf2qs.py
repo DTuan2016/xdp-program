@@ -303,8 +303,21 @@ def main():
         # BITVECTOR_TYPE typedef
         h.write(f"typedef {bit_type} BITVECTOR_TYPE;\n\n")
         h.write(f"static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {{\n")
-        h.write(f"    return {msb_builtin}\n")
+        h.write(f"     return {msb_builtin}\n")
         h.write("}\n\n")
+        
+        # h.write(f"static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {{\n")
+        # h.write(f"    if (!x)\n")
+        # h.write(f"        return 63;\n\n")
+        # h.write(f"    __u32 i = 0;\n")
+        # h.write(f"    for (int bit = 0; bit < 64; bit++) {{\n")
+        # h.write(f"        if (x & (1ULL << (63 - bit))) {{\n")
+        # h.write(f"            i = bit;\n")
+        # h.write(f"            break;\n")
+        # h.write(f"        }}\n")
+        # h.write(f"    }}\n")
+        # h.write(f"    return i;\n")
+        # h.write(f"}}\n")
         
         h.write(flow_struct)
         # Struct with fixed-size arrays

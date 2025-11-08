@@ -1,0 +1,476 @@
+[INFO] Starting QuickScorer test loop on device eno3
+===============================================
+
+>>> Testing configuration: 10 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_10_8_model.pkl
+Wrote header: common_kern_user.h  (trees=10, features=6, nodes=70, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (10 trees, 8 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 10 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_10_16_model.pkl
+Wrote header: common_kern_user.h  (trees=10, features=6, nodes=150, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (10 trees, 16 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 10 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_10_32_model.pkl
+Wrote header: common_kern_user.h  (trees=10, features=6, nodes=310, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (10 trees, 32 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 10 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_10_64_model.pkl
+Wrote header: common_kern_user.h  (trees=10, features=6, nodes=630, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (10 trees, 64 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 20 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_20_8_model.pkl
+Wrote header: common_kern_user.h  (trees=20, features=6, nodes=140, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 20-8
+
+>>> Testing configuration: 20 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_20_16_model.pkl
+Wrote header: common_kern_user.h  (trees=20, features=6, nodes=300, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 20-16
+
+>>> Testing configuration: 20 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_20_32_model.pkl
+Wrote header: common_kern_user.h  (trees=20, features=6, nodes=620, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (20 trees, 32 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 20 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_20_64_model.pkl
+Wrote header: common_kern_user.h  (trees=20, features=6, nodes=1260, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (20 trees, 64 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 30 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_30_8_model.pkl
+Wrote header: common_kern_user.h  (trees=30, features=6, nodes=210, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 30-8
+
+>>> Testing configuration: 30 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_30_16_model.pkl
+Wrote header: common_kern_user.h  (trees=30, features=6, nodes=450, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 30-16
+
+>>> Testing configuration: 30 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_30_32_model.pkl
+Wrote header: common_kern_user.h  (trees=30, features=6, nodes=930, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (30 trees, 32 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 30 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_30_64_model.pkl
+Wrote header: common_kern_user.h  (trees=30, features=6, nodes=1890, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+Success: Loaded BPF-object(xdp_prog_kern.o) and used program(xdp_anomaly_detector)
+ - XDP prog attached on device:eno3(ifindex:4)
+ - Pinning maps in /sys/fs/bpf/eno3/
+[OK] Loaded successfully (30 trees, 64 leaves)
+-----------------------------------------------
+
+>>> Testing configuration: 40 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_40_8_model.pkl
+Wrote header: common_kern_user.h  (trees=40, features=6, nodes=280, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 40-8
+
+>>> Testing configuration: 40 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_40_16_model.pkl
+Wrote header: common_kern_user.h  (trees=40, features=6, nodes=600, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 40-16
+
+>>> Testing configuration: 40 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_40_32_model.pkl
+Wrote header: common_kern_user.h  (trees=40, features=6, nodes=1240, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 40-32
+
+>>> Testing configuration: 40 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_40_64_model.pkl
+Wrote header: common_kern_user.h  (trees=40, features=6, nodes=2520, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 40-64
+
+>>> Testing configuration: 50 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_50_8_model.pkl
+Wrote header: common_kern_user.h  (trees=50, features=6, nodes=350, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 50-8
+
+>>> Testing configuration: 50 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_50_16_model.pkl
+Wrote header: common_kern_user.h  (trees=50, features=6, nodes=750, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 50-16
+
+>>> Testing configuration: 50 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_50_32_model.pkl
+Wrote header: common_kern_user.h  (trees=50, features=6, nodes=1550, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 50-32
+
+>>> Testing configuration: 50 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_50_64_model.pkl
+Wrote header: common_kern_user.h  (trees=50, features=6, nodes=3150, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 50-64
+
+>>> Testing configuration: 60 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_60_8_model.pkl
+Wrote header: common_kern_user.h  (trees=60, features=6, nodes=420, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 60-8
+
+>>> Testing configuration: 60 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_60_16_model.pkl
+Wrote header: common_kern_user.h  (trees=60, features=6, nodes=900, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 60-16
+
+>>> Testing configuration: 60 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_60_32_model.pkl
+Wrote header: common_kern_user.h  (trees=60, features=6, nodes=1860, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 60-32
+
+>>> Testing configuration: 60 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_60_64_model.pkl
+Wrote header: common_kern_user.h  (trees=60, features=6, nodes=3780, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 60-64
+
+>>> Testing configuration: 70 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_70_8_model.pkl
+Wrote header: common_kern_user.h  (trees=70, features=6, nodes=490, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 70-8
+
+>>> Testing configuration: 70 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_70_16_model.pkl
+Wrote header: common_kern_user.h  (trees=70, features=6, nodes=1050, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 70-16
+
+>>> Testing configuration: 70 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_70_32_model.pkl
+Wrote header: common_kern_user.h  (trees=70, features=6, nodes=2170, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 70-32
+
+>>> Testing configuration: 70 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_70_64_model.pkl
+Wrote header: common_kern_user.h  (trees=70, features=6, nodes=4410, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 70-64
+
+>>> Testing configuration: 80 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_80_8_model.pkl
+Wrote header: common_kern_user.h  (trees=80, features=6, nodes=560, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 80-8
+
+>>> Testing configuration: 80 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_80_16_model.pkl
+Wrote header: common_kern_user.h  (trees=80, features=6, nodes=1200, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 80-16
+
+>>> Testing configuration: 80 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_80_32_model.pkl
+Wrote header: common_kern_user.h  (trees=80, features=6, nodes=2480, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 80-32
+
+>>> Testing configuration: 80 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_80_64_model.pkl
+Wrote header: common_kern_user.h  (trees=80, features=6, nodes=5040, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 80-64
+
+>>> Testing configuration: 90 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_90_8_model.pkl
+Wrote header: common_kern_user.h  (trees=90, features=6, nodes=630, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 90-8
+
+>>> Testing configuration: 90 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_90_16_model.pkl
+Wrote header: common_kern_user.h  (trees=90, features=6, nodes=1350, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 90-16
+
+>>> Testing configuration: 90 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_90_32_model.pkl
+Wrote header: common_kern_user.h  (trees=90, features=6, nodes=2790, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 90-32
+
+>>> Testing configuration: 90 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_90_64_model.pkl
+Wrote header: common_kern_user.h  (trees=90, features=6, nodes=5670, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 90-64
+
+>>> Testing configuration: 100 trees, 8 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_100_8_model.pkl
+Wrote header: common_kern_user.h  (trees=100, features=6, nodes=700, MAX_LEAVES_PER_TREE=8)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 100-8
+
+>>> Testing configuration: 100 trees, 16 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_100_16_model.pkl
+Wrote header: common_kern_user.h  (trees=100, features=6, nodes=1500, MAX_LEAVES_PER_TREE=16)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 100-16
+
+>>> Testing configuration: 100 trees, 32 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_100_32_model.pkl
+Wrote header: common_kern_user.h  (trees=100, features=6, nodes=3100, MAX_LEAVES_PER_TREE=32)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 100-32
+
+>>> Testing configuration: 100 trees, 64 leaves
+---------------------------------------------------------------
+[INFO] Generating QS tables from /home/dongtv/security_paper/rf/rf_100_64_model.pkl
+Wrote header: common_kern_user.h  (trees=100, features=6, nodes=6300, MAX_LEAVES_PER_TREE=64)
+    CC       xdp_loader
+    CC       dump_map_to_csv
+    CLANG    xdp_prog_kern.o
+    LLC      xdp_prog_kern.o
+[INFO] Loading XDP program...
+[ERROR] Failed to load XDP program for 100-64
+
+[DONE] All test combinations completed.
