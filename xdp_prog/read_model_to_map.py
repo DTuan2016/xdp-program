@@ -3,10 +3,6 @@ import pandas as pd
 import os, sys
 import argparse
 import subprocess
-# from ebpfcat.arraymap import ArrayMap
-# from ebpfcat.pin import Pin
-# import ctypes
-# ctypes.cdll.LoadLibrary("/usr/lib/x86_64-linux-gnu/libbcc.so")
 from bcc import libbcc, BPF
 from math import log2
 import ctypes
@@ -49,7 +45,6 @@ typedef __u64               fixed;
 /* Latency statistics structure */
 typedef struct {{
     __u64 time_in;
-    __u64 time_out;
     __u64 proc_time;  /*proc_time += time_out - time_in*/
     __u32 total_pkts;
     __u32 total_bytes;
@@ -427,7 +422,7 @@ def run(cmd):
         sys.exit(1)
 
 if __name__ == "__main__":
-    MAP_DIR = "/sys/fs/bpf/eno3"
+    MAP_DIR = "/sys/fs/bpf/eth0"
     MAP_NAME = "xdp_randforest_nodes"
     MAP_PATH = f"{MAP_DIR}/{MAP_NAME}"
 
@@ -443,15 +438,15 @@ if __name__ == "__main__":
     MAX_TREE = args.max_tree
     MAX_LEAVES = args.max_leaves
     MAX_NODE_PER_TREE = 2 * MAX_LEAVES - 1
-    MODEL_PATH = f"/home/dongtv/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl"
+    MODEL_PATH = f"/home/security/dtuan/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl"
     MAX_DEPTH = int(log2(MAX_NODE_PER_TREE)) + 1
-    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, MAX_DEPTH, 6, 16)
+    generate_common_header("/home/security/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, MAX_DEPTH, 6, 16)
     
     print("\n=== Biên dịch chương trình XDP ===")
     run("sudo make")
     
-    os.chdir("/home/dongtv/dtuan/xdp-program/xdp_prog")
+    os.chdir("/home/security/dtuan/xdp-program/xdp_prog")
     print("\n==== Load chương trình XDP mới ===")
-    run(f"sudo ./xdp_loader --dev eno3 -S --progname xdp_anomaly_detector")
+    run(f"sudo ./xdp_loader --dev eth0 -S --progname xdp_anomaly_detector")
     
     load_df_to_map(dump_random_forest_to_csv(MODEL_PATH), MAP_PATH, MAX_TREE, MAX_LEAVES_PER_TREES)

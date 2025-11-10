@@ -26,13 +26,13 @@ struct {
     // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_flow_tracking SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __type(key, struct flow_key);
-    __type(value, data_point);
-    __uint(max_entries, MAX_FLOW_SAVED);
-    // __uint(pinning, LIBBPF_PIN_BY_NAME);
-} xdp_flow_dropped SEC(".maps");
+// struct {
+//     __uint(type, BPF_MAP_TYPE_HASH);
+//     __type(key, struct flow_key);
+//     __type(value, data_point);
+//     __uint(max_entries, MAX_FLOW_SAVED);
+//     // __uint(pinning, LIBBPF_PIN_BY_NAME);
+// } xdp_flow_dropped SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -42,7 +42,6 @@ struct {
     // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } accounting_map SEC(".maps");
 
-
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_TREES * MAX_NODE_PER_TREE);
@@ -51,13 +50,13 @@ struct {
     // __uint(pinning, LIBBPF_PIN_BY_NAME);
 } xdp_randforest_nodes SEC(".maps");
 
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, __u32);
-    // __uint(pinning, LIBBPF_PIN_BY_NAME);
-} flow_counter SEC(".maps");
+// struct {
+//     __uint(type, BPF_MAP_TYPE_ARRAY);
+//     __uint(max_entries, 1);
+//     __type(key, __u32);
+//     __type(value, __u32);
+//     // __uint(pinning, LIBBPF_PIN_BY_NAME);
+// } flow_counter SEC(".maps");
 
 /* ================= PACKET PARSING ================= */
 static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
@@ -208,10 +207,10 @@ static __always_inline int update_stats(struct flow_key *key,
         if (bpf_map_update_elem(&xdp_flow_tracking, key, &zero, BPF_ANY) != 0)
             return ret;
 
-        __u32 idx = 0;
-        __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
-        if (cnt)
-            __sync_fetch_and_add(cnt, 1);
+        // __u32 idx = 0;
+        // __u32 *cnt = bpf_map_lookup_elem(&flow_counter, &idx);
+        // if (cnt)
+        //     __sync_fetch_and_add(cnt, 1);
 
         return ret;
     }
@@ -242,7 +241,7 @@ static __always_inline int update_stats(struct flow_key *key,
     dp->label = pred ? 1 : 0;    
     if(dp->label == 1){
         ret = XDP_DROP;
-        bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY);
+        // bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY);
     }
     else ret = XDP_PASS;
 
@@ -273,10 +272,13 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
         return XDP_PASS;
 
     ret = update_stats(&key, ctx);
-    ac->time_out = bpf_ktime_get_ns();
-    ac->proc_time += ac->time_out - ac->time_in;
-    ac->total_bytes += pkt_len;
-    ac->total_pkts += 1;
+    __u64 time_out = bpf_ktime_get_ns();
+    // ac->proc_time += time_out - ac->time_in;
+    // ac->total_bytes += pkt_len;
+    // ac->total_pkts += 1;
+    __sync_fetch_and_add(&ac->proc_time, time_out - ac->time_in);
+    __sync_fetch_and_add(&ac->total_pkts, 1);
+    __sync_fetch_and_add(&ac->total_bytes, pkt_len);
     bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
     return ret;
 }

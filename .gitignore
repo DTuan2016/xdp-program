@@ -71,3 +71,6 @@ xdp_sample_pkts_user
 # configure output
 config.mk
 xdp_prog/dump_map_to_csv
+
+perf.data
+perf.data.old
