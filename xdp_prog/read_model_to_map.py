@@ -55,7 +55,6 @@ typedef struct {{
 /* Latency statistics structure */
 typedef struct {{
     __u64 time_in;
-    __u64 time_out;
     __u64 proc_time;  /*proc_time += time_out - time_in*/
     __u32 total_pkts;
     __u32 total_bytes;
@@ -268,12 +267,12 @@ const svm_weight svm_weights = {{
         f.write(end_header.strip() + "\n")
 
 if __name__ == "__main__":
-    df_weights = dump_linear_svm_to_df("/home/dongtv/security_paper/svm/models/SVM-Linear.pkl")
+    df_weights = dump_linear_svm_to_df("/home/security/dtuan/security_paper/svm/models/SVM-Linear.pkl")
     print(df_weights.head())
     # df_weights.to_csv("svm_weights.csv", index=False)
     # print("Đã xuất trọng số ra svm_weights.csv")
     
-    df_scaler = dump_min_max_scaler("/home/dongtv/security_paper/svm/scalers/scaler_SVM-Linear.pkl")
+    df_scaler = dump_min_max_scaler("/home/security/dtuan/security_paper/svm/scalers/scaler_SVM-Linear.pkl")
     # df_scaler.to_csv("svm_scaler.csv")
     # print("Đã xuất scaler ra svm_scaler.csv")
     
