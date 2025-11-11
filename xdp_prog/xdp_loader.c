@@ -68,7 +68,6 @@ static const struct option_wrapper long_options[] = {
 
 const char *pin_basedir =  "/sys/fs/bpf";
 const char *map_name    =  "xdp_flow_tracking";
-const char *nodes_map_name = "xdp_randforest_nodes";
 
 /* Pinning maps under /sys/fs/bpf in subdir */
 int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
@@ -118,8 +117,8 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 int main(int argc, char **argv)
 {
 	struct xdp_program *program;
-	struct bpf_map_info info = {0};
-	int err, len, nodes_map_fd;
+	// struct bpf_map_info info = {0};
+	int err, len;
 
 	struct config cfg = {
 		.attach_mode = XDP_MODE_SKB,
@@ -168,24 +167,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "ERR: creating pin dirname\n");
         return EXIT_FAIL_OPTION;
     }
-	nodes_map_fd = open_bpf_map_file(pin_dir, "xdp_randforest_nodes", &info);
-    if (nodes_map_fd < 0) {
-        fprintf(stderr, "[ERROR] Could not open pinned map '%s/xdp_randforest_nodes'\n", pin_dir);
-        return EXIT_FAIL_BPF;
-    }
-	// /* Load QS model data into the map */
-	// __u32 total_nodes = MAX_TREES * MAX_NODE_PER_TREE;
-    // for (__u32 i = 0; i < total_nodes; i++) {
-    //     int err = bpf_map_update_elem(nodes_map_fd, &i, &nodes[i], BPF_ANY);
-    //     if (err) {
-    //         fprintf(stderr,
-    //                 "[ERROR] Failed to update node %u (errno=%d: %s)\n",
-    //                 i, errno, strerror(errno));
-    //         return EXIT_FAIL_BPF;
-    //     }
-    // }
-	// printf("[INFO] Successfully loaded %u nodes into map '%s'\n",
-	// total_nodes, nodes_map_name);
 
     return EXIT_OK;
 }
