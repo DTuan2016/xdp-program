@@ -256,20 +256,49 @@ def main():
             leaves_flat.extend([0] * pad)
 
     # Decide BITVECTOR_TYPE
+    # if max_leaves_pow2 <= 8:
+    #     bit_type = "__u8"
+    #     msb_builtin = "__builtin_clz((__u32)x) - 24;"
+    # elif max_leaves_pow2 <= 16:
+    #     bit_type = "__u16"
+    #     msb_builtin = "__builtin_clz((__u32)x) - 16;"
+    # elif max_leaves_pow2 <= 32:
+    #     bit_type = "__u32"
+    #     msb_builtin = "__builtin_clz((__u32)x);"
+    # elif max_leaves_pow2 <= 64:
+    #     bit_type = "__u64"
+    #     msb_builtin = "__builtin_clzll(x);"
+    
+    # DTUAN_START
     if max_leaves_pow2 <= 8:
         bit_type = "__u8"
-        msb_builtin = "__builtin_clzll((__u64)x) - 56;"
+        table = [0,1,2,6,3,7,5,4]
+        debruijn = 0x17
+        shift = 3
+        mask = 0x7
     elif max_leaves_pow2 <= 16:
         bit_type = "__u16"
-        msb_builtin = "__builtin_clzll((__u64)x) - 48;"
+        table = [0,1,2,12,3,13,10,14,4,8,11,15,5,9,6,7]
+        debruijn = 0x0FAD
+        shift = 4
+        mask = 0xF
     elif max_leaves_pow2 <= 32:
         bit_type = "__u32"
-        msb_builtin = "__builtin_clzll((__u64)x) - 32;"
-    elif max_leaves_pow2 <= 64:
+        table = [0,9,1,10,13,21,2,29,11,14,16,18,22,25,3,30,
+                 8,12,20,28,15,17,24,7,19,27,23,6,26,5,4,31]
+        debruijn = 0x07C4ACDD
+        shift = 27
+        mask = 0x1F
+    else:
         bit_type = "__u64"
-        msb_builtin = "__builtin_clzll(x);"
-        
-
+        table = [0,1,2,57,3,61,58,47,4,62,52,59,49,48,5,32,
+                 63,53,50,33,60,46,51,36,6,39,44,38,37,43,35,
+                 7,54,40,41,34,42,31,30,29,28,27,26,25,24,23,
+                 22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,55,56,45]
+        debruijn = 0x07EDD5E59A4E28C2
+        shift = 58
+        mask = 0x3F
+    # DTUAN_END
     out = Path("common_kern_user.h")
     guard = "__COMMON_KERN_USER_H"
     FIXED_SHIFT = args.fixed_shift
@@ -301,24 +330,29 @@ def main():
         h.write(f"typedef __u64 fixed;\n\n")
 
         # BITVECTOR_TYPE typedef
-        h.write(f"typedef {bit_type} BITVECTOR_TYPE;\n\n")
-        h.write(f"static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {{\n")
-        h.write(f"     return {msb_builtin}\n")
-        h.write("}\n\n")
-        
+        # h.write(f"typedef {bit_type} BITVECTOR_TYPE;\n\n")
         # h.write(f"static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {{\n")
-        # h.write(f"    if (!x)\n")
-        # h.write(f"        return 63;\n\n")
-        # h.write(f"    __u32 i = 0;\n")
-        # h.write(f"    for (int bit = 0; bit < 64; bit++) {{\n")
-        # h.write(f"        if (x & (1ULL << (63 - bit))) {{\n")
-        # h.write(f"            i = bit;\n")
-        # h.write(f"            break;\n")
-        # h.write(f"        }}\n")
-        # h.write(f"    }}\n")
-        # h.write(f"    return i;\n")
-        # h.write(f"}}\n")
-        
+        # h.write("    if (x == 0)\n")
+        # h.write("        return 0;\n")
+        # h.write(f"     return {msb_builtin}\n")
+        # h.write("}\n\n")
+        # DTUAN_START
+        h.write(f"typedef {bit_type} BITVECTOR_TYPE;\n")
+        h.write("static __always_inline BITVECTOR_TYPE msb_index(BITVECTOR_TYPE x) {\n")
+        h.write(f"    static const __u8 index[{len(table)}] = {{ {', '.join(map(str, table))} }};\n")
+        h.write("    if (x == 0) return 0;\n")
+        h.write("    x |= x >> 1;\n")
+        h.write("    x |= x >> 2;\n")
+        h.write("    x |= x >> 4;\n")
+        if bit_type in ["__u16", "__u32", "__u64"]:
+            h.write("    x |= x >> 8;\n")
+        if bit_type in ["__u32", "__u64"]:
+            h.write("    x |= x >> 16;\n")
+        if bit_type == "__u64":
+            h.write("    x |= x >> 32;\n")
+        h.write(f"    return index[((x * 0x{debruijn:X}) >> {shift}) & {mask:#x}];\n")
+        h.write("}\n\n")
+        # DTUAN_END
         h.write(flow_struct)
         # Struct with fixed-size arrays
         h.write("/*\n")
@@ -410,4 +444,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

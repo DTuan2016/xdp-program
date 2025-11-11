@@ -100,7 +100,6 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         }
     }
 
-
     if (iph->protocol == IPPROTO_TCP) {
         struct tcphdr *tcph = (struct tcphdr *)((__u8 *)iph + (iph->ihl * 4));
         if ((void *)(tcph + 1) > data_end)
@@ -129,7 +128,7 @@ static __always_inline __u64 qs_vote_all(struct qsDataStruct *tree)
     __u64 votes = 0;
     __u64 leaf_base = 0;
     // bpf_printk("START VOTING");
-    // #pragma unroll
+    #pragma unroll
     for (int h = 0; h < QS_NUM_TREES; h++) {
         // bpf_printk("Voting with tree %d", h);
         // BITVECTOR_TYPE exit_leaf_idx = (BITVECTOR_TYPE)(__u8)msb_index(tree->v[h]);
