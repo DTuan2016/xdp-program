@@ -6,11 +6,11 @@
 /* Fixed-point configuration */
 #define FIXED_SHIFT         16
 #define FIXED_SCALE         65536
-#define MAX_TREES           20
+#define MAX_TREES           10
 #define MAX_NODE_PER_TREE   15
 #define MAX_FEATURES        6
 #define MAX_DEPTH           4
-#define TOTAL_NODES         300
+#define TOTAL_NODES         150
 #define MAX_FLOW_SAVED      1000
 
 #define QS_FEATURE_FLOW_DURATION                0
