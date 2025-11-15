@@ -122,19 +122,19 @@ static __always_inline __s128 calculate_svm (data_point *dp, const svm_weight *p
         return 0;
     __s128 dot = 0;
     for (int i = 0; i < MAX_FEATURES; i++) {
-        bpf_printk("feature[%d]=%llu, min_vals[%d]=%llu, max_vals[%d]=%llu", i, dp->features[i], i, params->min_vals[i], i, params->max_vals[i]);
+        // bpf_printk("feature[%d]=%llu, min_vals[%d]=%llu, max_vals[%d]=%llu", i, dp->features[i], i, params->min_vals[i], i, params->max_vals[i]);
         fixed test = dp->features[i] - params->min_vals[i];
         fixed scale = params->max_vals[i] - params->min_vals[i];
 
         dp->features[i] = fixed_div(test, scale);
-        bpf_printk("Feature %d co gia tri la: %llu", i, dp->features[i]);
-        bpf_printk("Weight of feature %d co gia tri la: %llu", i, params->value[i]);
+        // bpf_printk("Feature %d co gia tri la: %llu", i, dp->features[i]);
+        // bpf_printk("Weight of feature %d co gia tri la: %llu", i, params->value[i]);
         __s128 term = fixed_mul(dp->features[i], params->value[i]);
         if (params->is_neg[i]== 1){
             dot -= term;
         }
         else dot += term;
-        bpf_printk("Value of dot of feature %d is: %lld", i, dot);
+        // bpf_printk("Value of dot of feature %d is: %lld", i, dot);
     }
 
     if(params->is_neg[MAX_FEATURES] == 1){
@@ -190,14 +190,14 @@ static __always_inline int update_stats(struct flow_key *key,
     dp->features[FEATURE_FWD_PACKET_LENGTH_MIN]         = fixed_log2(dp->min_pkt_len);
     dp->features[FEATURE_FWD_IAT_MIN]                   = fixed_log2(dp->min_IAT);
 
-    bpf_printk("dp->last_seen=%llu; dp->total_pkts=%u; dp->total_bytes=%llu; ", dp->last_seen, dp->total_pkts, dp->total_bytes);
+    // bpf_printk("dp->last_seen=%llu; dp->total_pkts=%u; dp->total_bytes=%llu; ", dp->last_seen, dp->total_pkts, dp->total_bytes);
     __u32 key_pr = 0;
     svm_weight *svm_pr = bpf_map_lookup_elem(&svm_map, &key_pr); 
 
     __s128 svm_ret = calculate_svm(dp, svm_pr);
     if(svm_ret < 0){
         dp->label = 1;
-        bpf_printk("Toi drop roi khong track nua!");
+        // bpf_printk("Toi drop roi khong track nua!");
         ret = XDP_PASS;
     }
     else{
@@ -214,7 +214,7 @@ static __always_inline int update_stats(struct flow_key *key,
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
-    // bpf_printk("===START===");
+    // // bpf_printk("===START===");
     struct flow_key key = {};
     __u64 pkt_len = 0;
     __u32 key_ac = 0;
