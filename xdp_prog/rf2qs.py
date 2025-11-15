@@ -22,7 +22,6 @@ flow_struct = """
 /* Latency statistics structure */
 typedef struct {
     __u64 time_in;
-    __u64 time_out;
     __u64 proc_time;  /*proc_time += time_out - time_in*/
     __u32 total_pkts;
     __u32 total_bytes;

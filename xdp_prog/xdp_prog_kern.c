@@ -260,7 +260,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 {
     struct flow_key key = {};
     __u64 pkt_len = 0;
-    __u32 key_ac;
+    __u32 key_ac = 0;
     
     accounting *ac;
 
@@ -279,8 +279,8 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
 
     ret = update_stats(&key, ctx);
 
-    ac->time_out = bpf_ktime_get_ns();
-    ac->proc_time += ac->time_out - ac->time_in;
+    __u64 time_out = bpf_ktime_get_ns();
+    ac->proc_time += time_out - ac->time_in;
     ac->total_bytes += pkt_len;
     ac->total_pkts += 1;
     bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
