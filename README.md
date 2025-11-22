@@ -45,6 +45,6 @@ Our work primarily focuses on addressing the question of how to deploy machine-l
 - **SVM**: A kernel-level inference engine for Support Vector Machine (SVM) classification.
 - **KNN_threshold**: This module implements inference based on a K-Nearest Neighbors (KNN) classifier using a threshold-based decision mechanism. The current implementation focuses primarily on functional correctness; performance optimizations have not yet been applied.
 - **Supervised_LOF**: This component performs anomaly detection using a Supervised Local Outlier Factor (LOF) model. The LOF algorithm is trained offline, and the resulting model is subsequently deployed to the kernel for real-time inference.
-- **Userscace**: This module aggregates features extracted from packet-level events and stores them in BPF maps. A userspace daemon periodically (every one second) retrieves these features and performs inference across multiple algorithms, enabling flexible integration of higher-level or computationally intensive models.
+- **Userspace**: This module aggregates features extracted from packet-level events and stores them in BPF maps. A userspace daemon periodically (every one second) retrieves these features and performs inference across multiple algorithms, enabling flexible integration of higher-level or computationally intensive models.
 
 ### I will include the usage instructions for each branch within its respective branch!
