@@ -267,14 +267,27 @@ const svm_weight svm_weights = {{
         f.write(end_header.strip() + "\n")
 
 if __name__ == "__main__":
-    df_weights = dump_linear_svm_to_df("/home/security/dtuan/security_paper/svm/models/SVM-Linear.pkl")
+    
+    parser = argparse.ArgumentParser(description="Load SVM model and scaler, optionally export CSV")
+    parser.add_argument("--svm_model", required=True, help="Path to the trained Linear SVM model (pkl)")
+    parser.add_argument("--scaler", required=True, help="Path to the MinMax scaler (pkl)")
+    parser.add_argument("--export_csv", action="store_true", help="Export weights and scaler to CSV")
+    args = parser.parse_args()
+    
+    # Load SVM weights
+    df_weights = dump_linear_svm_to_df(args.svm_model)
+    print("SVM weights preview:")
     print(df_weights.head())
-    # df_weights.to_csv("svm_weights.csv", index=False)
-    # print("Đã xuất trọng số ra svm_weights.csv")
-    
-    df_scaler = dump_min_max_scaler("/home/security/dtuan/security_paper/svm/scalers/scaler_SVM-Linear.pkl")
-    # df_scaler.to_csv("svm_scaler.csv")
-    # print("Đã xuất scaler ra svm_scaler.csv")
-    
+    if args.export_csv:
+        df_weights.to_csv("svm_weights.csv", index=False)
+        print("SVM weights exported to svm_weights.csv")
+
+    # Load scaler
+    df_scaler = dump_min_max_scaler(args.scaler)
+    if args.export_csv:
+        df_scaler.to_csv("svm_scaler.csv", index=False)
+        print("Scaler exported to svm_scaler.csv")
+
+    # Generate common header and write SVM weights into it
     generate_common_header("common_kern_user.h")
     generate_svm_weights(df_weights=df_weights, df_scaler=df_scaler, output_path="common_kern_user.h")
