@@ -12,9 +12,6 @@
 #define MAX_FLOW_SAVED  10000
 #define WARM_UP_FOR_KNN 1000
 #define MAX_FEATURE     5
-// #define MAX_TEST        1000
-// 150  // 200  //
-// 1397 // 1840 //
 
 typedef int32_t fixed;
 
