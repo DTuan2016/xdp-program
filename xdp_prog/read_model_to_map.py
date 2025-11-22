@@ -100,31 +100,26 @@ static __always_inline double fixed_to_float(fixed value)
     return (double)value / (double)FIXED_SCALE;
 }}
 
-/* Convert unsigned integer to fixed-point */
 static __always_inline fixed fixed_from_uint(__u64 value)
 {{
     return value << FIXED_SHIFT;
 }}
 
-/* Convert fixed-point to integer (truncate fractional) */
 static __always_inline __u64 fixed_to_uint(fixed value)
 {{
     return value >> FIXED_SHIFT;
 }}
 
-/* Add two fixed-point values */
 static __always_inline fixed fixed_add(fixed a, fixed b)
 {{
     return a + b;
 }}
 
-/* Subtract two fixed-point values (with underflow protection) */
 static __always_inline fixed fixed_sub(fixed a, fixed b)
 {{
     return (a > b) ? (a - b) : 0;
 }}
 
-/* Multiply two fixed-point values (with scale correction) */
 static __always_inline fixed fixed_mul(fixed a, fixed b)
 {{
     /* Use 128-bit intermediate to prevent overflow */
@@ -140,7 +135,6 @@ static __always_inline fixed fixed_mul(fixed a, fixed b)
     return (result_int << FIXED_SHIFT) + result_frac + result_frac_frac;
 }}
 
-/* Divide two fixed-point values */
 static __always_inline fixed fixed_div(fixed a, fixed b)
 {{
     if (b == 0)
@@ -151,7 +145,6 @@ static __always_inline fixed fixed_div(fixed a, fixed b)
     return shifted_a / b;
 }}
 
-/* Square root using integer Newton's method */
 static __always_inline fixed fixed_sqrt(fixed value)
 {{
     if (value == 0)
@@ -169,14 +162,12 @@ static __always_inline fixed fixed_sqrt(fixed value)
     return x;
 }}
 
-/* Fixed-point absolute value */
 static __always_inline fixed fixed_abs(fixed value)
 {{
     /* For unsigned __u64, this is just the value itself */
     return value;
 }}
 
-/* Compare two fixed-point values */
 static __always_inline int fixed_compare(fixed a, fixed b)
 {{
     if (a < b) return -1;
@@ -184,19 +175,7 @@ static __always_inline int fixed_compare(fixed a, fixed b)
     return 0;
 }}
 
-/* Fixed-point minimum */
-static __always_inline fixed fixed_min(fixed a, fixed b)
-{{
-    return (a < b) ? a : b;
-}}
 
-/* Fixed-point maximum */
-static __always_inline fixed fixed_max(fixed a, fixed b)
-{{
-    return (a > b) ? a : b;
-}}
-
-/* Fixed-point log2 approximation */
 static __always_inline fixed fixed_log2(__u64 x)
 {{
     if (x == 0)
@@ -205,40 +184,32 @@ static __always_inline fixed fixed_log2(__u64 x)
     __u64 int_part = 0;
     __u64 tmp = x;
     
-    /* Find integer part of log2 */
     while (tmp >>= 1)
         int_part++;
 
-    /* Calculate fractional part using linear approximation */
     __u64 base = 1ULL << int_part;
     __u64 remainder = x - base;
 
-    /* Fractional part: remainder / base scaled to fixed-point */
     __u64 frac = (remainder << FIXED_SHIFT) / base;
     
     return (int_part << FIXED_SHIFT) | frac;
 }}
 
-/* Natural logarithm approximation (ln) */
 static __always_inline fixed fixed_ln(__u64 x)
 {{
     if (x == 0)
         return 0;
     
-    /* ln(x) = log2(x) * ln(2) */
-    /* ln(2) ≈ 0.693147... ≈ 177 / 256 for 8-bit fractional */
     fixed log2_val = fixed_log2(x);
-    fixed ln2 = 177;  /* 0.693147 * 256 ≈ 177 */
+    fixed ln2 = 177;
     
     return fixed_mul(log2_val, ln2);
 }}
 
-/* Exponential function approximation (e^x) using Taylor series */
 static __always_inline fixed fixed_exp(fixed x)
 {{
-    /* e^x ≈ 1 + x + x²/2! + x³/3! + x⁴/4! ... (first 5 terms) */
-    fixed result = FIXED_SCALE;  /* 1.0 */
-    fixed term = FIXED_SCALE;    /* Current term */
+    fixed result = FIXED_SCALE; 
+    fixed term = FIXED_SCALE;  
     
     // #pragma unroll
     for (int i = 1; i <= 6; i++) {{
@@ -250,10 +221,9 @@ static __always_inline fixed fixed_exp(fixed x)
     return result;
 }}
 
-/* Power function (a^b) for small integer exponents */
 static __always_inline fixed fixed_pow(fixed base, __u32 exp)
 {{
-    fixed result = FIXED_SCALE;  /* 1.0 */
+    fixed result = FIXED_SCALE;
     
     // #pragma unroll
     for (__u32 i = 0; i < exp && i < 16; i++) {{
@@ -422,31 +392,32 @@ def run(cmd):
         sys.exit(1)
 
 if __name__ == "__main__":
-    MAP_DIR = "/sys/fs/bpf/eno3"
+    # --- Parse arguments ---
+    parser = argparse.ArgumentParser(description="Load RandomForest model into XDP program")
+    parser.add_argument("--max_tree", type=int, required=True, help="Number of trees in RandomForest")
+    parser.add_argument("--max_leaves", type=int, required=True, help="Maximum leaves per tree")
+    parser.add_argument("--iface", type=str, required=True, help="Network interface to attach XDP program")
+    parser.add_argument("--model_folder", type=str, required=True, help="Path to folder containing RandomForest model")
+    parser.add_argument("--home_folder", type=str, required=True, help="Path of home folder")
+    args = parser.parse_args()
+    IFACE = args.iface
+    MAP_DIR = f"/sys/fs/bpf/{IFACE}"
     MAP_NAME = "xdp_randforest_nodes"
     MAP_PATH = f"{MAP_DIR}/{MAP_NAME}"
-
-    parser = argparse.ArgumentParser(description="Load RandomForest model with params")
-    parser.add_argument("--max_tree", type=int, required=True, help="Number of trees in RandomForest")
-    parser.add_argument("--max_leaves", type=int, required=True, help="Max leaves per tree")
-
-    args = parser.parse_args()
-
-    MAX_TREE = args.max_tree
-    MAX_LEAVES_PER_TREES = args.max_leaves
-
     MAX_TREE = args.max_tree
     MAX_LEAVES = args.max_leaves
     MAX_NODE_PER_TREE = 2 * MAX_LEAVES - 1
-    MODEL_PATH = f"/home/dongtv/security_paper/rf/rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl"
     MAX_DEPTH = int(log2(MAX_NODE_PER_TREE)) + 1
-    generate_common_header("/home/dongtv/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, 2* MAX_LEAVES_PER_TREES - 1, MAX_DEPTH, 6, 16)
+    HOME_FOLDER=args.home_folder
+    MODEL_PATH = os.path.join(args.model_folder, f"rf_{MAX_TREE}_{MAX_LEAVES}_model.pkl")
+
+    generate_common_header(f"{HOME_FOLDER}/dtuan/xdp-program/xdp_prog/common_kern_user.h", MAX_TREE, MAX_NODE_PER_TREE, MAX_DEPTH, 6, 16)
     
     print("\n=== Biên dịch chương trình XDP ===")
     run("sudo make")
     
-    os.chdir("/home/dongtv/dtuan/xdp-program/xdp_prog")
+    os.chdir(f"{HOME_FOLDER}/dtuan/xdp-program/xdp_prog")
     print("\n==== Load chương trình XDP mới ===")
-    run(f"sudo ./xdp_loader --dev eno3 -S --progname xdp_anomaly_detector")
+    run(f"sudo ./xdp_loader --dev {IFACE} -S --progname xdp_anomaly_detector")
     
-    load_df_to_map(dump_random_forest_to_csv(MODEL_PATH), MAP_PATH, MAX_TREE, MAX_LEAVES_PER_TREES)
+    load_df_to_map(dump_random_forest_to_csv(MODEL_PATH), MAP_PATH, MAX_TREE, MAX_LEAVES)
