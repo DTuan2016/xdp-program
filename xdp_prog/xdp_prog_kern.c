@@ -19,7 +19,7 @@
 
 /* ================= MAPS ================= */
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
