@@ -19,7 +19,7 @@
 
 /* ================= MAPS ================= */
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __type(key, struct flow_key);
     __type(value, data_point);
     __uint(max_entries, MAX_FLOW_SAVED);
@@ -43,7 +43,7 @@ struct {
 } accounting_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, MAX_FLOW_SAVED);
     __type(key, struct flow_key);
     __type(value, data_point);
@@ -95,7 +95,8 @@ static __always_inline int parse_packet_get_data(struct xdp_md *ctx,
         // 192.168.50.3 -> 192.168.50.4 (type 8 = Echo Request)
         // 192.168.50.4 -> 192.168.50.3 (type 0 = Echo Reply)
         if ((src == 0xC0A83203 && dst == 0xC0A83204 && icmp->type == 8) ||
-            (src == 0xC0A83204 && dst == 0xC0A83203 && icmp->type == 0)) {
+            (src == 0xC0A83204 && dst == 0xC0A83203 && icmp->type == 0) ||
+            (src == 0xC0A8331E || dst == 0xC0A8331E )) {
             return 1;
         }
     }
@@ -258,6 +259,10 @@ static __always_inline int update_stats(struct flow_key *key,
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
+    __u64 pid_tgid =  bpf_get_current_pid_tgid();
+    __u32 tgid = pid_tgid >> 32;
+    __u32 pid = pid_tgid & 0xFFFFFFFF;
+    bpf_printk("XDP: pid=%u tgid=%u\n", pid, tgid);
     struct flow_key key = {};
     __u64 pkt_len = 0;
     __u32 key_ac = 0;
