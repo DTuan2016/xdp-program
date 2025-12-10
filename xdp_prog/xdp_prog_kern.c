@@ -44,7 +44,7 @@ struct {
 } xdp_flow_dropped SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(type, BPF_MAP_TYPE_ARRAY);
     __type(key, __u32);
     __type(value, accounting);
     __uint(max_entries, 1);
