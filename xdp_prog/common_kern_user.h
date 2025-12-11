@@ -5,7 +5,7 @@
 #define __COMMON_KERN_USER_H
 
 #include <stdint.h>
-#include <math.h>
+//#include <math.h>
 
 #define MAX_FLOW_SAVED                       10000
 #define MAX_FEATURES                         6
