@@ -2,8 +2,8 @@
 
 XDP_TARGETS := xdp_prog_kern
 USER_TARGETS := xdp_loader
-# USER_TARGETS += xdp_stats
-USER_TARGETS += dump_map_to_csv
+USER_TARGETS += af_xdp_prog
+# USER_TARGETS += dump_map_to_csv
 COMMON_DIR := ../common
 
 COMMON_OBJS := $(COMMON_DIR)/common_user_bpf_xdp.o

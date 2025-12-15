@@ -74,3 +74,5 @@ xdp_prog/dump_map_to_csv
 
 perf.data
 perf.data.old
+
+xdp_prog/.vscode
