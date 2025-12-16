@@ -259,10 +259,10 @@ static __always_inline int update_stats(struct flow_key *key,
 SEC("xdp")
 int xdp_anomaly_detector(struct xdp_md *ctx)
 {
-    __u64 pid_tgid =  bpf_get_current_pid_tgid();
-    __u32 tgid = pid_tgid >> 32;
-    __u32 pid = pid_tgid & 0xFFFFFFFF;
-    bpf_printk("XDP: pid=%u tgid=%u\n", pid, tgid);
+    //__u64 pid_tgid =  bpf_get_current_pid_tgid();
+    //__u32 tgid = pid_tgid >> 32;
+    //__u32 pid = pid_tgid & 0xFFFFFFFF;
+    //bpf_printk("XDP: pid=%u tgid=%u\n", pid, tgid);
     struct flow_key key = {};
     __u64 pkt_len = 0;
     __u32 key_ac = 0;
