@@ -61,13 +61,13 @@ static const struct option_wrapper long_options[] = {
 
 	{{0, 0, NULL,  0 }, NULL, false}
 };
-
 #ifndef PATH_MAX
 #define PATH_MAX	4096
 #endif
 
 const char *pin_basedir =  "/sys/fs/bpf";
 const char *map_name    =  "xdp_flow_tracking";
+const char *svm_map 	=  "svm_map";
 
 /* Pinning maps under /sys/fs/bpf in subdir */
 int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
@@ -117,16 +117,17 @@ int pin_maps_in_bpf_object(struct bpf_object *bpf_obj, const char *subdir)
 int main(int argc, char **argv)
 {
 	struct xdp_program *program;
-	// struct bpf_map_info info = {0};
-	int err, len;
+	struct bpf_map_info info = {0};
+	int err, len, svm_fd, key = 0;
 
 	struct config cfg = {
-		.attach_mode = XDP_MODE_SKB,
+		.attach_mode = XDP_MODE_NATIVE,
 		.ifindex     = -1,
 		.do_unload   = false,
 	};
-
+	/* Set default BPF-ELF object file and BPF program name */
 	strncpy(cfg.filename, default_filename, sizeof(cfg.filename));
+	/* Cmdline options can change progname */
 	parse_cmdline_args(argc, argv, long_options, &cfg, __doc__);
 
 	/* Required option */
@@ -135,6 +136,7 @@ int main(int argc, char **argv)
 		usage(argv[0], __doc__, long_options, (argc == 1));
 		return EXIT_FAIL_OPTION;
 	}
+
 	char pin_dir[PATH_MAX];
 	memset(pin_dir, 0, sizeof(pin_dir));
 	len = snprintf(pin_dir, sizeof(pin_dir), "%s/%s", pin_basedir, cfg.ifname);
@@ -144,6 +146,7 @@ int main(int argc, char **argv)
 	}
 	strncpy(cfg.pin_dir, pin_dir, sizeof(cfg.pin_dir) - 1);
 	cfg.pin_dir[sizeof(cfg.pin_dir) - 1] = '\0';
+
 
 	program = load_bpf_and_xdp_attach(&cfg);
 	if (!program)
@@ -162,11 +165,23 @@ int main(int argc, char **argv)
 		fprintf(stderr, "ERR: pinning maps\n");
 		return err;
 	}
-
-    if (len < 0) {
+	if (len < 0) {
         fprintf(stderr, "ERR: creating pin dirname\n");
         return EXIT_FAIL_OPTION;
     }
-
-    return EXIT_OK;
+	svm_fd = open_bpf_map_file(pin_dir, "svm_map", &info);
+    if (svm_fd < 0) {
+        fprintf(stderr, "[ERROR] Could not open pinned map '%s/svm_map'\n", pin_dir);
+        return EXIT_FAIL_BPF;
+    }
+	
+	svm_weight svm_weight_map;
+	__builtin_memset(&svm_weight_map, 0, sizeof(svm_weight));
+	__builtin_memcpy(&svm_weight_map, &svm_weights, sizeof(svm_weight));
+	
+	if (bpf_map_update_elem(svm_fd, &key, &svm_weight_map, BPF_ANY) != 0) {
+        perror("bpf_map_update_elem failed");
+        return 1;
+    }
+	return EXIT_OK;
 }
