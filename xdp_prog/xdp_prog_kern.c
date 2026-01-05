@@ -250,7 +250,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __sync_fetch_and_add(&ac->total_pkts, 1);
     __sync_fetch_and_add(&ac->total_bytes, pkt_len);
     bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
-    __u32 other_interface = 23;
+    __u32 other_interface = 9;
     // bpf_redirect(other_interface, 0);
    
     return bpf_redirect(other_interface, 0);
