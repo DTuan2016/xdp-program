@@ -72,3 +72,4 @@ xdp_sample_pkts_user
 config.mk
 xdp_prog/dump_map_to_csv
 .vscode/
+xdp_prog/.vscode/
