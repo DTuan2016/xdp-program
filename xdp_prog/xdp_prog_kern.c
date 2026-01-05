@@ -113,6 +113,30 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     __sync_fetch_and_add(&ac->proc_time, time_out - ac->time_in);
     __sync_fetch_and_add(&ac->total_pkts, 1);
     __sync_fetch_and_add(&ac->total_bytes, pkt_len);
+    // bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
+    __u32 other_interface = 9;
+    
+    return bpf_redirect(other_interface, 0);
+}
+
+SEC("xdp")
+int stats(struct xdp_md *ctx){
+    __u64 pkt_len = 0;
+    __u32 key_ac = 0;
+    accounting *ac;
+    struct flow_key key = {};
+    ac = bpf_map_lookup_elem(&accounting_map, &key_ac);
+    if(!ac){
+        return XDP_PASS;
+    }
+    ac->time_in = bpf_ktime_get_ns();
+    if (parse_packet_get_data(ctx, &key, &pkt_len) != 0){
+        return XDP_PASS;
+    }
+    __u64 time_out = bpf_ktime_get_ns();
+    __sync_fetch_and_add(&ac->proc_time, time_out - ac->time_in);
+    __sync_fetch_and_add(&ac->total_pkts, 1);
+    __sync_fetch_and_add(&ac->total_bytes, pkt_len);
     bpf_map_update_elem(&accounting_map, &key_ac, ac, BPF_ANY);
     return XDP_PASS;
 }
