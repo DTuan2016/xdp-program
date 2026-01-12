@@ -220,8 +220,7 @@ int xdp_anomaly_detector(struct xdp_md *ctx)
     struct flow_key key = {};
     __u64 pkt_len = 0;
     __u32 key_ac = 0;
-        return ret;
-    
+
     accounting *ac;
 
     ac = bpf_map_lookup_elem(&accounting_map, &key_ac);
