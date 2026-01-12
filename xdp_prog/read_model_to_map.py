@@ -40,6 +40,9 @@ def generate_common_header(output_path: str, max_tree : int, max_nodes : int, ma
 #define QS_FEATURE_FWD_PACKET_LENGTH_MIN        4
 #define QS_FEATURE_FWD_IAT_MIN                  5
 
+#define FLOW_LEVEL_PKTS                      6
+#define FLOW_LEVEL_DUR_NS                    100
+
 typedef __u64               fixed;
 
 /* Latency statistics structure */

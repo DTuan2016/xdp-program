@@ -209,14 +209,16 @@ static __always_inline int update_stats(struct flow_key *key,
     dp->features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
     dp->features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
 
-    int pred = predict_forest(dp);
-    /*BENIGN = 0, ATTACK = 1*/
-    dp->label = pred ? 1 : 0;    
-    if(dp->label == 1){
-        ret = XDP_DROP;
-        // bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY);
+    if((dp->features[QS_FEATURE_FLOW_DURATION]) >= FLOW_LEVEL_DUR_NS || (dp->features[QS_FEATURE_TOTAL_FWD_PACKET] >= FLOW_LEVEL_PKTS)){
+        int pred = predict_forest(dp);
+        /*BENIGN = 0, ATTACK = 1*/
+        dp->label = pred ? 1 : 0;    
+        if(dp->label == 1){
+            ret = XDP_DROP;
+            // bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY);
+        }
+        else ret = XDP_PASS;
     }
-    else ret = XDP_PASS;
 
     return ret;
 }
