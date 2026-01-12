@@ -19,6 +19,9 @@ static __always_inline __u64 fixed_to_uint(fixed value)
 """
 
 flow_struct = """
+#define FLOW_LEVEL_PKTS                      6
+#define FLOW_LEVEL_DUR_NS                    100
+
 /* Latency statistics structure */
 typedef struct {
     __u64 time_in;

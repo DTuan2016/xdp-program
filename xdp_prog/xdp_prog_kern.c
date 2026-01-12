@@ -223,35 +223,37 @@ static __always_inline int update_stats(struct flow_key *key,
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
 
-    struct feat_vec fv = {
-        .features = {0},
-    };
+    if((dp->total_pkts == FLOW_LEVEL_PKTS) || (dp->last_seen - dp->start_ts == FLOW_LEVEL_DUR_NS)){            
+        struct feat_vec fv = {
+            .features = {0},
+        };
 
-    // bpf_printk("START DETECTION");
-    fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
-    fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
-    fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
-    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
-    fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
-    fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
+        // bpf_printk("START DETECTION");
+        fv.features[QS_FEATURE_FLOW_DURATION] = fixed_from_uint(dp->last_seen - dp->start_ts);
+        fv.features[QS_FEATURE_TOTAL_FWD_PACKET] = fixed_from_uint(dp->total_pkts);
+        fv.features[QS_FEATURE_TOTAL_LENGTH_OF_FWD_PACKET] = fixed_from_uint(dp->total_bytes);
+        fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MAX] = fixed_from_uint(dp->max_pkt_len);
+        fv.features[QS_FEATURE_FWD_PACKET_LENGTH_MIN] = fixed_from_uint(dp->min_pkt_len);
+        fv.features[QS_FEATURE_FWD_IAT_MIN] = fixed_from_uint(dp->min_IAT);
 
-    int pred = predict_forest(fv);
-    // bpf_printk("DONE PREDICT");
-    dp->label = pred ? 1 : 0;
-    
-    if(dp->label == 0){
-        // bpf_printk("[DETECTION] BENIGN -> PASS");
-        ret = XDP_PASS;
-    } 
-    else {
-        // bpf_printk("[DETECTION] ATTACK -> DROP");
-        ret = XDP_DROP;
-        if (bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY) != 0)
+        int pred = predict_forest(fv);
+        // bpf_printk("DONE PREDICT");
+        dp->label = pred ? 1 : 0;
+        
+        if(dp->label == 0){
+            // bpf_printk("[DETECTION] BENIGN -> PASS");
+            ret = XDP_PASS;
+        } 
+        else {
+            // bpf_printk("[DETECTION] ATTACK -> DROP");
+            ret = XDP_DROP;
+            if (bpf_map_update_elem(&xdp_flow_dropped, key, dp, BPF_ANY) != 0)
+                return ret;
+        }
+        if (bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0)
             return ret;
-    }
-    if (bpf_map_update_elem(&xdp_flow_tracking, key, dp, BPF_ANY) != 0)
-        return ret;
 
+    }
     return ret;
 }
 

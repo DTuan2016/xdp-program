@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Device
-DEV="eno3"
+DEV="enp5s0"
 
 # Dải số lượng cây
 TREE_LIST=(10 20 30 40 50 60 70 80 90 100)
@@ -10,7 +10,7 @@ TREE_LIST=(10 20 30 40 50 60 70 80 90 100)
 LEAF_LIST=(8 16 32 64)
 
 # Đường dẫn model RF
-MODEL_DIR=~/security_paper/rf
+MODEL_DIR=~/dtuan/security_paper/rf
 
 # Log output
 LOG_DIR=./logs
