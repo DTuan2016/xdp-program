@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "compare": "c",
-        "cstdint": "c",
-        "array": "c",
-        "string_view": "c",
-        "initializer_list": "c"
-    }
-}
