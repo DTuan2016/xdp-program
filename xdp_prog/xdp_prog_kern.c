@@ -189,8 +189,8 @@ static __always_inline int update_stats(struct flow_key *key,
     __u32 key_pr = 0;
     svm_weight *svm_pr = bpf_map_lookup_elem(&svm_map, &key_pr); 
     __s128 svm_ret = 0;
-    if((dp->features[FEATURE_TOTAL_FWD_PACKET] == FLOW_LEVEL_PKTS) 
-       ||(dp->features[FEATURE_FLOW_DURATION] == FLOW_LEVEL_DUR_NS)){
+    if((dp->features[FEATURE_TOTAL_FWD_PACKET] >= FLOW_LEVEL_PKTS) 
+       ||(dp->features[FEATURE_FLOW_DURATION] >= FLOW_LEVEL_DUR_NS)){
         svm_ret = calculate_svm(dp, svm_pr);
         goto cal_svm;
     }
