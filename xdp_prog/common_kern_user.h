@@ -16,6 +16,9 @@
 #define FEATURE_FWD_PACKET_LENGTH_MIN        4
 #define FEATURE_FWD_IAT_MIN                  5
 
+#define FLOW_LEVEL_PKTS                      6
+#define FLOW_LEVEL_DUR_NS                    100
+
 /* Define for fixed point Q48.16 */
 #define FIXED_SHIFT                          16
 #define FIXED_SCALE                          (1ULL << FIXED_SHIFT)
