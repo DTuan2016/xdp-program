@@ -223,7 +223,7 @@ static __always_inline int update_stats(struct flow_key *key,
     __sync_fetch_and_add(&dp->total_pkts, 1);
     __sync_fetch_and_add(&dp->total_bytes, pkt_len);
 
-    if((dp->total_pkts == FLOW_LEVEL_PKTS) || (dp->last_seen - dp->start_ts == FLOW_LEVEL_DUR_NS)){            
+    if((dp->total_pkts >= FLOW_LEVEL_PKTS) || (dp->last_seen - dp->start_ts >= FLOW_LEVEL_DUR_NS)){            
         struct feat_vec fv = {
             .features = {0},
         };
